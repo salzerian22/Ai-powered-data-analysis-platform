@@ -1,0 +1,33 @@
+# Environment & secrets
+.env
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# AI planning artifacts
+_advancement_full.txt
+_advancement_v2_full.txt
+_report_full.txt
+_report_text.txt
+
+# Local reports and archives
+*.docx
+*.zip
+progress_report.md
+PROJECT_CHANGE_REPORT.md
