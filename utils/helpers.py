@@ -10,7 +10,7 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 # ── API Key Loading (secure) ─────────────────────────────────
-def get_groq_api_key() -> str:
+def get_groq_api_key(required: bool = False) -> str | None:
     """Load GROQ API key from Streamlit Secrets (production)
     or .env file (local development). Never hardcode keys."""
     # 1. Try Streamlit Secrets (used on Streamlit Cloud)
@@ -35,11 +35,13 @@ def get_groq_api_key() -> str:
         return key
 
     logger.error("Missing GROQ_API_KEY")
-    st.error("Missing GROQ_API_KEY! Set it in .streamlit/secrets.toml or .env file.")
-    st.stop()
+    if required:
+        st.error("Missing GROQ_API_KEY! Set it in .streamlit/secrets.toml or .env file.")
+        st.stop()
+    return None
 
 
-GROQ_API_KEY = get_groq_api_key()
+GROQ_API_KEY = get_groq_api_key(required=False)
 
 # ── Page Styling ─────────────────────────────────────────────
 def set_page_style() -> None:

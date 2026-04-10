@@ -427,6 +427,17 @@ if action != "Do Nothing":
     apply_col, keep_col = st.columns(2)
     with apply_col:
         if st.button("🚨 Apply Outlier Handling", use_container_width=True):
+            rows_before = int(df.shape[0])
+            rows_after = int(new_df.shape[0])
+            st.session_state["outlier_log"] = {
+                "action": action,
+                "column": selected_col,
+                "method": method,
+                "outlier_count": int(outlier_count),
+                "rows_before": rows_before,
+                "rows_after": rows_after,
+                "rows_removed": rows_before - rows_after,
+            }
             push_undo()
             save_dataframe(new_df)
             st.success(f"✅ Applied: {action}")

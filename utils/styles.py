@@ -29,8 +29,24 @@ def inject_global_css() -> None:
     border-right: 1px solid #1e3a5f;
 }
 
-[data-testid="stSidebar"] * {
+[data-testid="stSidebar"] :not(.material-symbols-rounded):not([class*="material-symbol"]) {
     font-family: "IBM Plex Sans", sans-serif;
+}
+
+[data-testid="stSidebar"] .material-symbols-rounded,
+[data-testid="stSidebar"] [class*="material-symbol"] {
+    font-family: "Material Symbols Rounded", "Material Symbols Outlined", sans-serif !important;
+}
+
+/* Hide Streamlit's built-in sidebar toggle/header controls across Streamlit variants. */
+[data-testid="collapsedControl"],
+[data-testid="stSidebarCollapseButton"],
+[data-testid="stSidebar"] button[kind="header"],
+[data-testid="stSidebar"] button[kind="headerNoPadding"],
+[data-testid="stSidebarNav"] button,
+button[aria-label="Open sidebar"],
+button[aria-label="Close sidebar"] {
+    display: none !important;
 }
 
 /* Hide Streamlit's generated multipage nav header, which can leak raw icon text. */

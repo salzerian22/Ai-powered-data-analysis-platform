@@ -12,6 +12,17 @@ Roles: identifier | datetime | boolean | numeric | ordinal | categorical | text
 
 import pandas as pd
 
+
+def _is_year_like_numeric(series: pd.Series, name: str) -> bool:
+    non_null = series.dropna()
+    if non_null.empty:
+        return False
+    if "year" not in name:
+        return False
+    if not pd.api.types.is_numeric_dtype(series):
+        return False
+    return non_null.between(1900, 2100).all()
+
 def classify_column(series: pd.Series, col_name: str) -> str:
     """Return semantic role for a single column.
 
@@ -34,7 +45,9 @@ def classify_column(series: pd.Series, col_name: str) -> str:
     # â”€â”€ 2. Datetime detection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if pd.api.types.is_datetime64_any_dtype(series):
         return 'datetime'
-    date_hints = ['date', 'time', 'year', 'month', 'day', 'timestamp']
+    if _is_year_like_numeric(series, name):
+        return 'ordinal'
+    date_hints = ['date', 'time', 'month', 'day', 'timestamp']
     if any(hint in name for hint in date_hints):
         try:
             pd.to_datetime(series.dropna().head(20))

@@ -7,3 +7,5 @@ groq==1.1.1
 python-dotenv==1.2.2
 openpyxl
 xlrd
+fpdf2
+kaleido

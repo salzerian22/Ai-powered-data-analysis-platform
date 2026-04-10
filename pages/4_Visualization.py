@@ -15,7 +15,7 @@ from utils.helpers import (
     record_chart_view,
 )
 from utils.column_classifier import get_column_roles, get_columns_by_role
-from utils.visualization import CHART_TYPES, recommend_chart, render_chart
+from utils.visualization import CHART_TYPES, recommend_chart, render_chart, prepare_x_axis
 from utils.heatmap import should_show_heatmap, describe_correlation
 from utils.chart_summary import show_chart_summary
 from utils.logger import get_logger
@@ -336,8 +336,7 @@ def is_meaningful_column(col, df):
 
 df = df[[c for c in df.columns if is_meaningful_column(c, df)]]
 
-if "column_roles" not in st.session_state or set(st.session_state["column_roles"].keys()) != set(df.columns):
-    st.session_state["column_roles"] = get_column_roles(df)
+st.session_state["column_roles"] = get_column_roles(df)
 column_roles = st.session_state["column_roles"]
 
 try:
@@ -467,24 +466,33 @@ num_cols = [col for col in get_columns_by_role(column_roles, "numeric", "ordinal
 cat_cols = [col for col in get_columns_by_role(column_roles, "categorical") if col in df.columns]
 time_cols = [col for col in get_columns_by_role(column_roles, "datetime") if col in df.columns]
 id_cols = [col for col in get_columns_by_role(column_roles, "identifier") if col in df.columns]
+year_like_cols = [col for col in df.columns if "year" in col.lower()]
 pseudo_cat = [col for col in num_cols if df[col].nunique() <= 10]
 all_cat = cat_cols + pseudo_cat
 
 detected_time_col = None
+year_cols = [
+    col for col in num_cols
+    if "year" in col.lower() and df[col].dropna().between(1900, 2100).all()
+]
+
 df_parse = df.copy()
-for col in df_parse.columns:
+for col in time_cols:
     if col in id_cols:
         continue
-    if "date" in col.lower() or "year" in col.lower() or "time" in col.lower():
-        try:
-            df_parse[col] = pd.to_datetime(df_parse[col])
+    try:
+        parsed = pd.to_datetime(df_parse[col], errors="coerce")
+        if parsed.notna().sum() > 0:
+            df_parse[col] = parsed
             detected_time_col = col
             break
-        except Exception:
-            continue
+    except Exception:
+        continue
+
 if detected_time_col:
     df = df_parse
-    save_dataframe(df)
+elif year_cols:
+    detected_time_col = year_cols[0]
 else:
     sequence_col = "__row_order__"
     if sequence_col not in df.columns:
@@ -493,11 +501,15 @@ else:
 
 graph_options = []
 for col in num_cols:
+    if col in year_like_cols:
+        continue
     graph_options.append({"type": "Distribution", "x": col, "y": col, "score": score_graph(col, col, df)})
 
 for cat in all_cat:
     for num in num_cols:
         if cat == num:
+            continue
+        if num in year_like_cols:
             continue
         graph_options.append({"type": "Category vs Value", "x": cat, "y": num, "score": score_graph(cat, num, df)})
 
@@ -507,6 +519,8 @@ if len(num_cols) >= 2:
     for i in range(len(num_cols)):
         for j in range(i + 1, len(num_cols)):
             if abs(corr.iloc[i, j]) > 0.5:
+                if num_cols[i] in year_like_cols or num_cols[j] in year_like_cols:
+                    continue
                 title = f"{num_cols[i]} vs {num_cols[j]}"
                 if title not in used_titles:
                     used_titles.add(title)
@@ -521,6 +535,8 @@ if len(num_cols) >= 2:
 
 if detected_time_col:
     for num in num_cols:
+        if num == detected_time_col:
+            continue
         graph_options.append(
             {
                 "type": "Trend",
@@ -531,6 +547,8 @@ if detected_time_col:
         )
 elif num_cols:
     for num in num_cols:
+        if num in year_like_cols:
+            continue
         graph_options.append(
             {
                 "type": "Trend",
@@ -574,7 +592,7 @@ else:
     record_chart_view(g["x"], g.get("y", g["x"]))
 
     if g["type"] == "Distribution":
-        fig = px.histogram(df, x=g["x"], color_discrete_sequence=["#4da6ff"])
+        fig = px.histogram(df, x=g["x"], title=f"Distribution of {g['x']}", color_discrete_sequence=["#4da6ff"])
         apply_dark_theme(fig)
         smart_info = f"This shows how values of '{g['x']}' are distributed."
         summary_cols = [g["x"]]
@@ -586,6 +604,7 @@ else:
             grouped,
             x=g["x"],
             y=g["y"],
+            title=f"{g['y']} by {g['x']}",
             color=g["y"],
             color_continuous_scale=["#003399", "#0066cc", "#00aaff"],
         )
@@ -594,7 +613,7 @@ else:
         summary_cols = [g["x"], g["y"]]
         summary_type = "Bar chart"
     elif g["type"] == "Relationship":
-        fig = px.scatter(df, x=g["x"], y=g["y"], opacity=0.6, color_discrete_sequence=["#4da6ff"])
+        fig = px.scatter(df, x=g["x"], y=g["y"], title=f"{g['y']} over {g['x']}", opacity=0.6, color_discrete_sequence=["#4da6ff"])
         apply_dark_theme(fig)
         smart_info = f"This shows the relationship between '{g['x']}' and '{g['y']}'."
         summary_cols = [g["x"], g["y"]]
@@ -602,7 +621,10 @@ else:
     else:
         grouped = df.groupby(g["x"])[g["y"]].mean().reset_index()
         grouped = grouped.sort_values(by=g["x"])
+        grouped = grouped.copy()
+        grouped[g["x"]] = prepare_x_axis(grouped[g["x"]])
         fig = px.line(grouped, x=g["x"], y=g["y"], markers=True, color_discrete_sequence=["#4da6ff"])
+        fig.update_layout(title=f"{g['y']} over {g['x']}")
         apply_dark_theme(fig)
         if g["x"] == "__row_order__":
             smart_info = f"This shows how '{g['y']}' changes across dataset row order when no time column is available."

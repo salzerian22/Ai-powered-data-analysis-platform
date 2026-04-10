@@ -436,6 +436,7 @@ if df is None:
     st.warning("⚠️ Please upload a file on Home page first.")
     st.stop()
 
+outlier_log = st.session_state.get("outlier_log")
 total_cells = df.shape[0] * df.shape[1]
 missing = int(df.isnull().sum().sum())
 duplicates = int(df.duplicated().sum())
@@ -472,7 +473,11 @@ quality_df = pd.DataFrame(
 )
 
 integrity_issues = missing + duplicates
-consistency_score = max(0, min(100, round((completeness * 0.55) + (uniqueness * 0.45), 2)))
+outlier_bonus = 0.0
+if outlier_log and outlier_log.get("outlier_count", 0) > 0:
+    handled_ratio = outlier_log["outlier_count"] / max(outlier_log.get("rows_before", len(df)), 1)
+    outlier_bonus = min(5.0, handled_ratio * 100)
+consistency_score = max(0, min(100, round((completeness * 0.55) + (uniqueness * 0.45) + outlier_bonus, 2)))
 
 st.markdown('<div class="quality-shell">', unsafe_allow_html=True)
 st.markdown(
@@ -514,6 +519,21 @@ st.markdown(
 """,
     unsafe_allow_html=True,
 )
+
+if outlier_log:
+    st.markdown(
+        f"""
+<div style="margin:0.3rem 0 1rem 0;padding:0.95rem 1rem;border-radius:16px;border:1px solid rgba(98,255,162,0.34);background:linear-gradient(90deg, rgba(17,54,37,0.94), rgba(14,33,42,0.96));color:#d9ffea;font:500 0.95rem 'IBM Plex Sans',sans-serif;">
+    <b style="color:#ffffff">{outlier_log['action']}</b> was applied on column
+    <b style="color:#ffffff">{outlier_log['column']}</b> using
+    <b style="color:#ffffff">{outlier_log['method']}</b> detection.
+    &nbsp;|&nbsp; {outlier_log['outlier_count']} outliers detected
+    &nbsp;|&nbsp; Rows: {outlier_log['rows_before']} → {outlier_log['rows_after']}
+    ({'-' if outlier_log['rows_removed'] >= 0 else '+'}{abs(outlier_log['rows_removed'])} removed)
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
 st.markdown(
     f"""
@@ -616,7 +636,7 @@ st.dataframe(quality_df, use_container_width=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
 st.markdown(
-    """
+    f"""
 <div class="section-head">
     <h2>Overall Quality Score</h2>
     <div class="line"></div>
@@ -629,7 +649,7 @@ st.markdown(
     </div>
     <div class="gauge">
         <div class="gauge-arc"></div>
-        <div class="gauge-value">83%</div>
+        <div class="gauge-value">{consistency_score}%</div>
     </div>
 </div>
 """,

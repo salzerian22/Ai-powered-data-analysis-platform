@@ -342,6 +342,7 @@ else:
 
 if uploaded_file is not None:
     st.session_state["active_upload_name"] = uploaded_file.name
+    st.session_state["uploaded_filename"] = uploaded_file.name
 
 if uploaded_file is not None:
     # ── SIZE VALIDATION ───────────────────────────────────────
