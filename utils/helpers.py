@@ -167,6 +167,7 @@ def apply_dark_theme(fig: object) -> object:
 
 def render_plotly_chart(fig: object, **kwargs) -> None:
     """Render Plotly without Streamlit's theme overriding figure colors."""
+    fig = apply_dark_theme(fig)
     st.plotly_chart(fig, theme=None, **kwargs)
 
 # ── DataFrame State Management ───────────────────────────────
