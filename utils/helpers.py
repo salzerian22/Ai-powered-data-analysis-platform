@@ -5,9 +5,34 @@ import os
 import re
 import copy
 import pandas as pd
+import plotly.express as px
+import plotly.io as pio
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+PLOTLY_DARK_TEMPLATE = {
+    "layout": {
+        "paper_bgcolor": "#0b1220",
+        "plot_bgcolor": "#0d1f3c",
+        "font": {"color": "#ffffff"},
+        "title": {"font": {"color": "#4da6ff"}},
+        "xaxis": {
+            "gridcolor": "rgba(160,190,230,0.18)",
+            "linecolor": "rgba(160,190,230,0.30)",
+            "zerolinecolor": "rgba(160,190,230,0.22)",
+        },
+        "yaxis": {
+            "gridcolor": "rgba(160,190,230,0.18)",
+            "linecolor": "rgba(160,190,230,0.30)",
+            "zerolinecolor": "rgba(160,190,230,0.22)",
+        },
+    }
+}
+
+pio.templates["codex_dark"] = PLOTLY_DARK_TEMPLATE
+pio.templates.default = "codex_dark"
+px.defaults.template = "codex_dark"
 
 # ── API Key Loading (secure) ─────────────────────────────────
 def get_groq_api_key(required: bool = False) -> str | None:
@@ -118,9 +143,9 @@ def divider() -> None:
 def apply_dark_theme(fig: object) -> object:
     """Apply consistent dark theme to any Plotly figure."""
     fig.update_layout(
-        template=None,
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(13,31,60,0.8)',
+        template="codex_dark",
+        paper_bgcolor='#0b1220',
+        plot_bgcolor='#0d1f3c',
         font_color='white',
         title_font_color='#4da6ff'
     )
