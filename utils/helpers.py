@@ -118,12 +118,28 @@ def divider() -> None:
 def apply_dark_theme(fig: object) -> object:
     """Apply consistent dark theme to any Plotly figure."""
     fig.update_layout(
+        template=None,
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(13,31,60,0.8)',
         font_color='white',
         title_font_color='#4da6ff'
     )
+    fig.update_xaxes(
+        showgrid=True,
+        gridcolor='rgba(160,190,230,0.18)',
+        zerolinecolor='rgba(160,190,230,0.22)',
+    )
+    fig.update_yaxes(
+        showgrid=True,
+        gridcolor='rgba(160,190,230,0.18)',
+        zerolinecolor='rgba(160,190,230,0.22)',
+    )
     return fig
+
+
+def render_plotly_chart(fig: object, **kwargs) -> None:
+    """Render Plotly without Streamlit's theme overriding figure colors."""
+    st.plotly_chart(fig, theme=None, **kwargs)
 
 # ── DataFrame State Management ───────────────────────────────
 MAX_UNDO_STACK = 5

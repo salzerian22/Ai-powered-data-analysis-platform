@@ -16,7 +16,7 @@ import sys, os
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-from utils.helpers import divider, get_dataframe, apply_dark_theme
+from utils.helpers import divider, get_dataframe, apply_dark_theme, render_plotly_chart
 from utils.logger import get_logger
 from utils.styles import inject_global_css
 
@@ -485,7 +485,7 @@ if st.session_state.get("pred_models"):
                 line=dict(color="#7fc0ff", dash="dash"),
             )
             apply_dark_theme(fig1)
-            st.plotly_chart(fig1, use_container_width=True)
+            render_plotly_chart(fig1, use_container_width=True)
 
             residuals = y_test - y_pred
             fig_r = px.scatter(
@@ -496,7 +496,7 @@ if st.session_state.get("pred_models"):
             )
             fig_r.add_hline(y=0, line_dash="dash", line_color="red")
             apply_dark_theme(fig_r)
-            st.plotly_chart(fig_r, use_container_width=True)
+            render_plotly_chart(fig_r, use_container_width=True)
         else:
             with st.expander("📋 Classification Report"):
                 st.text(metrics["report"])
@@ -508,7 +508,7 @@ if st.session_state.get("pred_models"):
             color_continuous_scale=["#4b3a11", "#c7902f", "#ffd36d"],
         )
         apply_dark_theme(fig2)
-        st.plotly_chart(fig2, use_container_width=True)
+        render_plotly_chart(fig2, use_container_width=True)
         divider()
 
     # ── Predict for New Data ──────────────────────────────────

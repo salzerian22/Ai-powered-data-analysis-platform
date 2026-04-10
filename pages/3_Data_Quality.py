@@ -5,7 +5,7 @@ import sys, os
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-from utils.helpers import get_dataframe, apply_dark_theme
+from utils.helpers import get_dataframe, apply_dark_theme, render_plotly_chart
 from utils.logger import get_logger
 from utils.styles import inject_global_css
 
@@ -670,7 +670,7 @@ if len(missing_df) > 0:
         color_continuous_scale=["#0c5f3a", "#22a15d", "#83ff92"],
     )
     apply_dark_theme(fig)
-    st.plotly_chart(fig, use_container_width=True)
+    render_plotly_chart(fig, use_container_width=True)
 else:
     st.success("✅ No missing values!")
 

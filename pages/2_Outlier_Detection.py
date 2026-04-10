@@ -13,6 +13,7 @@ from utils.helpers import (
     pop_undo,
     get_undo_count,
     apply_dark_theme,
+    render_plotly_chart,
 )
 from utils.logger import get_logger
 from utils.styles import inject_global_css
@@ -385,7 +386,7 @@ st.markdown(
 fig = px.box(df, y=selected_col, title=f"Boxplot of {selected_col}")
 apply_dark_theme(fig)
 st.markdown('<div class="panel viz-panel">', unsafe_allow_html=True)
-st.plotly_chart(fig, use_container_width=True)
+render_plotly_chart(fig, use_container_width=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
 st.markdown(

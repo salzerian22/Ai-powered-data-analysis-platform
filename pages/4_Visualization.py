@@ -13,6 +13,7 @@ from utils.helpers import (
     GROQ_API_KEY,
     get_chart_memory,
     record_chart_view,
+    render_plotly_chart,
 )
 from utils.column_classifier import get_column_roles, get_columns_by_role
 from utils.visualization import CHART_TYPES, recommend_chart, render_chart, prepare_x_axis
@@ -636,7 +637,7 @@ else:
 
     dash_left, dash_right = st.columns([1.2, 0.9], gap="large")
     with dash_left:
-        st.plotly_chart(fig, use_container_width=True)
+        render_plotly_chart(fig, use_container_width=True)
     with dash_right:
         st.markdown("### Chart Insight")
         st.info(smart_info)
@@ -676,7 +677,7 @@ else:
         fig = render_chart(df, selected, chart_type, column_roles=column_roles)
         if fig is not None:
             apply_dark_theme(fig)
-            st.plotly_chart(fig, use_container_width=True)
+            render_plotly_chart(fig, use_container_width=True)
             if groq_client:
                 show_chart_summary(df, selected, chart_type, groq_client)
         else:
@@ -695,7 +696,7 @@ if len(num_cols) >= 2:
         corr_heatmap = df[num_cols].corr()
         fig = px.imshow(corr_heatmap, text_auto=True, color_continuous_scale="RdBu_r", zmin=-1, zmax=1)
         apply_dark_theme(fig)
-        st.plotly_chart(fig, use_container_width=True)
+        render_plotly_chart(fig, use_container_width=True)
 
         st.markdown("**Statistically significant correlations:**")
         for col_a, col_b, r, p_val in pairs:
