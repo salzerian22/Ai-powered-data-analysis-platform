@@ -142,22 +142,25 @@ def divider() -> None:
 # ── Plotly Dark Theme Helper ─────────────────────────────────
 def apply_dark_theme(fig: object) -> object:
     """Apply consistent dark theme to any Plotly figure."""
+    fig.layout.template = None
     fig.update_layout(
-        template="codex_dark",
-        paper_bgcolor='#0b1220',
-        plot_bgcolor='#0d1f3c',
-        font_color='white',
-        title_font_color='#4da6ff'
+        template=None,
+        paper_bgcolor="#0b1220",
+        plot_bgcolor="#0d1f3c",
+        font=dict(color="white"),
+        title_font=dict(color="#4da6ff"),
     )
     fig.update_xaxes(
         showgrid=True,
-        gridcolor='rgba(160,190,230,0.18)',
-        zerolinecolor='rgba(160,190,230,0.22)',
+        gridcolor="rgba(160,190,230,0.18)",
+        zerolinecolor="rgba(160,190,230,0.22)",
+        linecolor="rgba(160,190,230,0.30)",
     )
     fig.update_yaxes(
         showgrid=True,
-        gridcolor='rgba(160,190,230,0.18)',
-        zerolinecolor='rgba(160,190,230,0.22)',
+        gridcolor="rgba(160,190,230,0.18)",
+        zerolinecolor="rgba(160,190,230,0.22)",
+        linecolor="rgba(160,190,230,0.30)",
     )
     return fig
 
