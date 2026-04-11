@@ -555,7 +555,7 @@ elif num_cols:
                 "type": "Trend",
                 "x": "__row_order__",
                 "y": num,
-                "score": score_graph("__row_order__", num, df, is_time=True) - 5,
+                "score": score_graph("__row_order__", num, df, is_time=True) - 40,
             }
         )
 
