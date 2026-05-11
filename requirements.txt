@@ -5,7 +5,7 @@ plotly==6.6.0
 scikit-learn==1.8.0
 groq==1.1.1
 python-dotenv==1.2.2
-openpyxl
-xlrd
-fpdf2
-kaleido
+openpyxl==3.1.5
+xlrd==2.0.2
+fpdf2==2.8.7
+kaleido==0.2.1

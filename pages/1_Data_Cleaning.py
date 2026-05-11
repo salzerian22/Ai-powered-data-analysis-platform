@@ -620,13 +620,29 @@ elif active_step == "missing":
                 numeric_cols = df.select_dtypes(include=["number"]).columns
                 df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].mean())
                 save_dataframe(df)
-                st.success("✅ Filled missing values with Mean!")
+                remaining = df.isnull().sum().sum()
+                if remaining > 0:
+                    st.warning(
+                        f"Filled numeric columns. {remaining} non-numeric missing "
+                        f"values remain — use Mode or Custom Value for categorical columns."
+                    )
+                    st.caption("Before/after: numeric NaNs resolved, categorical NaNs untouched.")
+                else:
+                    st.success("All missing values filled.")
 
             elif method == "Fill with Median":
                 numeric_cols = df.select_dtypes(include=["number"]).columns
                 df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].median())
                 save_dataframe(df)
-                st.success("✅ Filled missing values with Median!")
+                remaining = df.isnull().sum().sum()
+                if remaining > 0:
+                    st.warning(
+                        f"Filled numeric columns. {remaining} non-numeric missing "
+                        f"values remain — use Mode or Custom Value for categorical columns."
+                    )
+                    st.caption("Before/after: numeric NaNs resolved, categorical NaNs untouched.")
+                else:
+                    st.success("All missing values filled.")
 
             elif method == "Fill with Mode":
                 skipped = []

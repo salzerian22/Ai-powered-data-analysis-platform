@@ -81,7 +81,7 @@ def recommend_chart(selected_cols: list[str], column_roles: dict[str, str]) -> s
         if role == 'categorical':
             return 'Bar chart'
         if role == 'datetime':
-            return 'Line chart'
+            return 'Bar chart'
         if role == 'boolean':
             return 'Pie chart'
         return 'Bar chart'

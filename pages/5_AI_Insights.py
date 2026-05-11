@@ -1,4 +1,5 @@
 import streamlit as st
+import pandas as pd
 import sys, os
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
@@ -269,6 +270,23 @@ if df is None:
     st.warning("⚠️ No data found! Please upload a file on the Home page first.")
     st.stop()
 
+if not st.session_state.get("groq_consent"):
+    st.warning(
+        "AI features will send dataset column names, statistics, and "
+        "up to 5 sample rows to Groq. Do not use with sensitive or "
+        "personal data."
+    )
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("I understand — enable AI features"):
+            st.session_state["groq_consent"] = True
+            st.rerun()
+    with col2:
+        if st.button("Statistics only (no sample rows)"):
+            st.session_state["groq_consent"] = "stats_only"
+            st.rerun()
+    st.stop()
+
 numeric_cols = df.select_dtypes(include="number").columns.tolist()
 string_cols = df.select_dtypes(include="object").columns.tolist()
 top_findings = len(numeric_cols) + len(string_cols)
@@ -425,8 +443,12 @@ def render_natural_language_query():
     st.markdown("<p style='color:#aad4ff'>Ask questions about your data in plain English!</p>", unsafe_allow_html=True)
 
     dynamic_examples = []
-    if numeric_cols:
-        dynamic_examples.append(f"Show rows where {numeric_cols[0]} > {int(df[numeric_cols[0]].median())}")
+    valid_numeric_cols = [c for c in numeric_cols if pd.notna(df[c].median())]
+    if valid_numeric_cols:
+        val = int(df[valid_numeric_cols[0]].median())
+        dynamic_examples.append(
+            f"Show rows where {valid_numeric_cols[0]} > {val}"
+        )
     if string_cols:
         top_val = df[string_cols[0]].mode().iloc[0] if not df[string_cols[0]].mode().empty else "X"
         dynamic_examples.append(f'Find rows where {string_cols[0]} == "{top_val}"')
@@ -456,7 +478,30 @@ def render_natural_language_query():
             st.error("❌ AI client is not available right now. Please check your GROQ API key.")
         else:
             with st.spinner("Thinking... ⏳"):
-                prompt = f"""You are a Python pandas expert. Your ONLY job is to convert a
+                if st.session_state.get("groq_consent") == "stats_only":
+                    prompt = f"""You are a Python pandas expert. Your ONLY job is to convert a
+user question into a pandas `df.query()` expression string.
+
+DataFrame columns and dtypes:
+{df.dtypes.to_string()}
+
+Statistical Summary:
+{df.describe().to_string()}
+
+RULES (follow strictly):
+1. Return ONLY the query string — no explanation, no code fences, no quotes around the whole thing.
+2. For numeric comparisons: use operators directly, e.g.  Salary > 70000
+3. For string comparisons: use ==  with double quotes around the value, e.g.  Department == "IT"
+4. If a column name contains spaces or special characters, wrap it in backticks, e.g.  `First Name` == "Alice"
+5. For multiple conditions use 'and' / 'or', e.g.  Age > 30 and Department == "HR"
+6. Do NOT use .str, .isin(), .apply(), or any method calls.
+7. Do NOT wrap output in df.query(...).
+8. Do NOT use parentheses for function calls.
+
+User question: {user_question}
+"""
+                else:
+                    prompt = f"""You are a Python pandas expert. Your ONLY job is to convert a
 user question into a pandas `df.query()` expression string.
 
 DataFrame columns and dtypes:
@@ -542,16 +587,26 @@ def render_chat_section():
                 st.error("❌ AI client is not available right now. Please check your GROQ API key.")
             else:
                 with st.spinner("Thinking... ⏳"):
-                    data_context = f"""
-                    You are a helpful data analysis assistant.
-                    Dataset: {df.shape[0]} rows, {df.shape[1]} columns
-                    Columns: {list(df.columns)}
-                    Stats: {df.describe().to_string()}
-                    Missing: {df.isnull().sum().to_string()}
-                    Duplicates: {df.duplicated().sum()}
-                    Sample: {df.head(5).to_string()}
-                    Answer clearly and friendly.
-                    """
+                    if st.session_state.get("groq_consent") == "stats_only":
+                        data_context = f"""
+                        You are a helpful data analysis assistant.
+                        Dataset: {df.shape[0]} rows, {df.shape[1]} columns
+                        Columns: {list(df.columns)}
+                        Dtypes: {df.dtypes.to_string()}
+                        Stats: {df.describe().to_string()}
+                        Answer clearly and friendly.
+                        """
+                    else:
+                        data_context = f"""
+                        You are a helpful data analysis assistant.
+                        Dataset: {df.shape[0]} rows, {df.shape[1]} columns
+                        Columns: {list(df.columns)}
+                        Stats: {df.describe().to_string()}
+                        Missing: {df.isnull().sum().to_string()}
+                        Duplicates: {df.duplicated().sum()}
+                        Sample: {df.head(5).to_string()}
+                        Answer clearly and friendly.
+                        """
                     messages = [{"role": "system", "content": data_context}]
                     for msg in st.session_state.messages[-10:]:
                         messages.append(msg)

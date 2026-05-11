@@ -317,6 +317,12 @@ if method == "IQR":
 else:
     mean = data.mean()
     std = data.std()
+    if std == 0 or np.isclose(std, 0):
+        st.info(
+            f'"{selected_col}" has zero variance — all values are identical. '
+            f"No outliers are possible."
+        )
+        st.stop()
     z_scores = (data - mean) / std
     outliers = data[np.abs(z_scores) > 3]
     lower = mean - 3 * std
@@ -418,7 +424,12 @@ new_df = df.copy()
 if action == "Cap outliers (safe)":
     new_df[selected_col] = np.clip(df[selected_col], lower, upper)
 elif action == "Remove outliers (loses rows)":
-    new_df = df[(df[selected_col] >= lower) & (df[selected_col] <= upper)].reset_index(drop=True)
+    nan_mask = df[selected_col].isna()
+    range_mask = (df[selected_col] >= lower) & (df[selected_col] <= upper)
+    new_df = df[nan_mask | range_mask].reset_index(drop=True)
+    outliers_removed = int((~nan_mask & ~range_mask).sum())
+    nans_kept = int(nan_mask.sum())
+    st.info(f"Removed {outliers_removed} outlier rows. {nans_kept} NaN rows preserved.")
 
 if action != "Do Nothing":
     before_col, after_col = st.columns(2)
@@ -443,9 +454,6 @@ if action != "Do Nothing":
             save_dataframe(new_df)
             st.success(f"✅ Applied: {action}")
             st.rerun()
-    with keep_col:
-        st.button("Keep as Is", disabled=True, use_container_width=True)
-
 st.markdown(
     """
 <div class="section-head">

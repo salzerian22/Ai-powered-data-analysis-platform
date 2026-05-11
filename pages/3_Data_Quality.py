@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import html
 import sys, os
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
@@ -521,12 +522,15 @@ st.markdown(
 )
 
 if outlier_log:
+    safe_col = html.escape(str(outlier_log["column"]))
+    safe_action = html.escape(str(outlier_log["action"]))
+    safe_method = html.escape(str(outlier_log["method"]))
     st.markdown(
         f"""
 <div style="margin:0.3rem 0 1rem 0;padding:0.95rem 1rem;border-radius:16px;border:1px solid rgba(98,255,162,0.34);background:linear-gradient(90deg, rgba(17,54,37,0.94), rgba(14,33,42,0.96));color:#d9ffea;font:500 0.95rem 'IBM Plex Sans',sans-serif;">
-    <b style="color:#ffffff">{outlier_log['action']}</b> was applied on column
-    <b style="color:#ffffff">{outlier_log['column']}</b> using
-    <b style="color:#ffffff">{outlier_log['method']}</b> detection.
+    <b style="color:#ffffff">{safe_action}</b> was applied on column
+    <b style="color:#ffffff">{safe_col}</b> using
+    <b style="color:#ffffff">{safe_method}</b> detection.
     &nbsp;|&nbsp; {outlier_log['outlier_count']} outliers detected
     &nbsp;|&nbsp; Rows: {outlier_log['rows_before']} → {outlier_log['rows_after']}
     ({'-' if outlier_log['rows_removed'] >= 0 else '+'}{abs(outlier_log['rows_removed'])} removed)
@@ -677,9 +681,11 @@ else:
 
 action_left, action_right = st.columns(2)
 with action_left:
-    st.button("Generate Quality Report", use_container_width=True, disabled=True)
+    if st.button("Generate Quality Report", use_container_width=True):
+        st.switch_page("pages/7_Export_Report.py")
 with action_right:
-    st.button("Improve Data", use_container_width=True, disabled=True)
+    if st.button("Improve Data", use_container_width=True):
+        st.switch_page("pages/1_Data_Cleaning.py")
 
 st.markdown(
     """

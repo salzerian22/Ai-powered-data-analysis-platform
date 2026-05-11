@@ -335,10 +335,8 @@ def is_meaningful_column(col, df):
     return True
 
 
-df = df[[c for c in df.columns if is_meaningful_column(c, df)]]
-
-st.session_state["column_roles"] = get_column_roles(df)
-column_roles = st.session_state["column_roles"]
+viz_df = df[[c for c in df.columns if is_meaningful_column(c, df)]]
+viz_column_roles = get_column_roles(viz_df)
 
 try:
     groq_client = Groq(api_key=GROQ_API_KEY)
@@ -410,10 +408,10 @@ st.markdown(
 
 divider()
 st.markdown("### 🔎 Filter Data")
-base_df = df.copy()
-col_filter = st.selectbox("Filter by column", [None] + df.columns.tolist(), key="global_filter_col")
+base_df = viz_df.copy()
+col_filter = st.selectbox("Filter by column", [None] + viz_df.columns.tolist(), key="global_filter_col")
 if col_filter:
-    vals = df[col_filter].dropna().unique().tolist()
+    vals = viz_df[col_filter].dropna().unique().tolist()
     current_vals = st.session_state.get("global_filter_vals")
     if not isinstance(current_vals, list):
         current_vals = vals
@@ -421,12 +419,12 @@ if col_filter:
     if not selected_vals:
         selected_vals = vals
     selected_vals = st.multiselect("Select values", vals, default=selected_vals, key="global_filter_vals")
-    filtered_df = df[df[col_filter].isin(selected_vals)]
+    filtered_df = viz_df[viz_df[col_filter].isin(selected_vals)]
     if filtered_df.empty:
         st.warning("No rows match the current filter selection. Showing the full dataset for visualization instead.")
-        df = base_df
+        viz_df = base_df
     else:
-        df = filtered_df
+        viz_df = filtered_df
         st.caption(f"Active filter: {col_filter} = {selected_vals}")
 
 st.markdown(
@@ -463,21 +461,21 @@ st.markdown(
 
 st.caption("Chart recommendations and builders below are fully functional and use your actual dataset.")
 
-num_cols = [col for col in get_columns_by_role(column_roles, "numeric", "ordinal") if col in df.columns]
-cat_cols = [col for col in get_columns_by_role(column_roles, "categorical") if col in df.columns]
-time_cols = [col for col in get_columns_by_role(column_roles, "datetime") if col in df.columns]
-id_cols = [col for col in get_columns_by_role(column_roles, "identifier") if col in df.columns]
-year_like_cols = [col for col in df.columns if "year" in col.lower()]
-pseudo_cat = [col for col in num_cols if df[col].nunique() <= 10]
+num_cols = [col for col in get_columns_by_role(viz_column_roles, "numeric", "ordinal") if col in viz_df.columns]
+cat_cols = [col for col in get_columns_by_role(viz_column_roles, "categorical") if col in viz_df.columns]
+time_cols = [col for col in get_columns_by_role(viz_column_roles, "datetime") if col in viz_df.columns]
+id_cols = [col for col in get_columns_by_role(viz_column_roles, "identifier") if col in viz_df.columns]
+year_like_cols = [col for col in viz_df.columns if "year" in col.lower()]
+pseudo_cat = [col for col in num_cols if viz_df[col].nunique() <= 10]
 all_cat = cat_cols + pseudo_cat
 
 detected_time_col = None
 year_cols = [
     col for col in num_cols
-    if "year" in col.lower() and df[col].dropna().between(1900, 2100).all()
+    if "year" in col.lower() and viz_df[col].dropna().between(1900, 2100).all()
 ]
 
-df_parse = df.copy()
+df_parse = viz_df.copy()
 for col in time_cols:
     if col in id_cols:
         continue
@@ -491,20 +489,20 @@ for col in time_cols:
         continue
 
 if detected_time_col:
-    df = df_parse
+    viz_df = df_parse
 elif year_cols:
     detected_time_col = year_cols[0]
 else:
     sequence_col = "__row_order__"
-    if sequence_col not in df.columns:
-        df = df.copy()
-        df[sequence_col] = range(1, len(df) + 1)
+    if sequence_col not in viz_df.columns:
+        viz_df = viz_df.copy()
+        viz_df[sequence_col] = range(1, len(viz_df) + 1)
 
 graph_options = []
 for col in num_cols:
     if col in year_like_cols:
         continue
-    graph_options.append({"type": "Distribution", "x": col, "y": col, "score": score_graph(col, col, df)})
+    graph_options.append({"type": "Distribution", "x": col, "y": col, "score": score_graph(col, col, viz_df)})
 
 for cat in all_cat:
     for num in num_cols:
@@ -512,11 +510,11 @@ for cat in all_cat:
             continue
         if num in year_like_cols:
             continue
-        graph_options.append({"type": "Category vs Value", "x": cat, "y": num, "score": score_graph(cat, num, df)})
+        graph_options.append({"type": "Category vs Value", "x": cat, "y": num, "score": score_graph(cat, num, viz_df)})
 
 used_titles = set()
 if len(num_cols) >= 2:
-    corr = df[num_cols].corr()
+    corr = viz_df[num_cols].corr()
     for i in range(len(num_cols)):
         for j in range(i + 1, len(num_cols)):
             if abs(corr.iloc[i, j]) > 0.5:
@@ -530,7 +528,7 @@ if len(num_cols) >= 2:
                             "type": "Relationship",
                             "x": num_cols[i],
                             "y": num_cols[j],
-                            "score": score_graph(num_cols[i], num_cols[j], df, corr=corr.iloc[i, j]),
+                            "score": score_graph(num_cols[i], num_cols[j], viz_df, corr=corr.iloc[i, j]),
                         }
                     )
 
@@ -543,7 +541,7 @@ if detected_time_col:
                 "type": "Trend",
                 "x": detected_time_col,
                 "y": num,
-                "score": score_graph(detected_time_col, num, df, is_time=True),
+                "score": score_graph(detected_time_col, num, viz_df, is_time=True),
             }
         )
 elif num_cols:
@@ -555,7 +553,7 @@ elif num_cols:
                 "type": "Trend",
                 "x": "__row_order__",
                 "y": num,
-                "score": score_graph("__row_order__", num, df, is_time=True) - 40,
+                "score": score_graph("__row_order__", num, viz_df, is_time=True) - 40,
             }
         )
 
@@ -593,13 +591,13 @@ else:
     record_chart_view(g["x"], g.get("y", g["x"]))
 
     if g["type"] == "Distribution":
-        fig = px.histogram(df, x=g["x"], title=f"Distribution of {g['x']}", color_discrete_sequence=["#4da6ff"])
+        fig = px.histogram(viz_df, x=g["x"], title=f"Distribution of {g['x']}", color_discrete_sequence=["#4da6ff"])
         apply_dark_theme(fig)
         smart_info = f"This shows how values of '{g['x']}' are distributed."
         summary_cols = [g["x"]]
         summary_type = "Histogram"
     elif g["type"] == "Category vs Value":
-        grouped = df.groupby(g["x"])[g["y"]].mean().reset_index()
+        grouped = viz_df.groupby(g["x"])[g["y"]].mean().reset_index()
         grouped = grouped.sort_values(by=g["y"], ascending=False)
         fig = px.bar(
             grouped,
@@ -614,13 +612,13 @@ else:
         summary_cols = [g["x"], g["y"]]
         summary_type = "Bar chart"
     elif g["type"] == "Relationship":
-        fig = px.scatter(df, x=g["x"], y=g["y"], title=f"{g['y']} over {g['x']}", opacity=0.6, color_discrete_sequence=["#4da6ff"])
+        fig = px.scatter(viz_df, x=g["x"], y=g["y"], title=f"{g['y']} over {g['x']}", opacity=0.6, color_discrete_sequence=["#4da6ff"])
         apply_dark_theme(fig)
         smart_info = f"This shows the relationship between '{g['x']}' and '{g['y']}'."
         summary_cols = [g["x"], g["y"]]
         summary_type = "Scatter plot"
     else:
-        grouped = df.groupby(g["x"])[g["y"]].mean().reset_index()
+        grouped = viz_df.groupby(g["x"])[g["y"]].mean().reset_index()
         grouped = grouped.sort_values(by=g["x"])
         grouped = grouped.copy()
         grouped[g["x"]] = prepare_x_axis(grouped[g["x"]])
@@ -642,7 +640,7 @@ else:
         st.markdown("### Chart Insight")
         st.info(smart_info)
         if groq_client:
-            show_chart_summary(df, summary_cols, summary_type, groq_client)
+            show_chart_summary(viz_df, summary_cols, summary_type, groq_client)
 
 st.markdown(
     """
@@ -658,13 +656,13 @@ st.markdown("### 🛠️ Manual Chart Builder")
 st.markdown('<div class="panel builder-wrap">', unsafe_allow_html=True)
 st.markdown("<p style='color:#aad4ff'>Pick your own columns and chart type</p>", unsafe_allow_html=True)
 
-selectable_cols = [c for c in df.columns if column_roles.get(c) != "identifier"]
+selectable_cols = [c for c in viz_df.columns if viz_column_roles.get(c) != "identifier"]
 
 col1, col2 = st.columns([2, 1])
 with col1:
     selected = st.multiselect("Select columns to visualize", selectable_cols, key="manual_cols")
 with col2:
-    default_chart = recommend_chart(selected, column_roles) if selected else "Bar chart"
+    default_chart = recommend_chart(selected, viz_column_roles) if selected else "Bar chart"
     default_idx = CHART_TYPES.index(default_chart) if default_chart in CHART_TYPES else 0
     chart_type = st.selectbox("Chart type", CHART_TYPES, index=default_idx, key="manual_chart_type")
 
@@ -674,12 +672,12 @@ else:
     if chart_type in ("Scatter plot", "Line chart") and len(selected) < 2:
         st.warning(f"⚠️ {chart_type} needs at least 2 columns. Please select one more.")
     else:
-        fig = render_chart(df, selected, chart_type, column_roles=column_roles)
+        fig = render_chart(viz_df, selected, chart_type, column_roles=viz_column_roles)
         if fig is not None:
             apply_dark_theme(fig)
             render_plotly_chart(fig, use_container_width=True)
             if groq_client:
-                show_chart_summary(df, selected, chart_type, groq_client)
+                show_chart_summary(viz_df, selected, chart_type, groq_client)
         else:
             st.error(f"❌ Could not render {chart_type} with the selected columns. Try a different combination.")
 st.markdown("</div>", unsafe_allow_html=True)
@@ -687,13 +685,13 @@ st.markdown("</div>", unsafe_allow_html=True)
 if len(num_cols) >= 2:
     divider()
     st.markdown("### 📊 Correlation Heatmap")
-    show, reason, pairs = should_show_heatmap(df, num_cols)
+    show, reason, pairs = should_show_heatmap(viz_df, num_cols)
 
     if not show:
         st.info(f"ℹ️ Heatmap skipped — {reason}")
     else:
         st.caption(f"✅ {reason}")
-        corr_heatmap = df[num_cols].corr()
+        corr_heatmap = viz_df[num_cols].corr()
         fig = px.imshow(corr_heatmap, text_auto=True, color_continuous_scale="RdBu_r", zmin=-1, zmax=1)
         apply_dark_theme(fig)
         render_plotly_chart(fig, use_container_width=True)
@@ -706,9 +704,11 @@ if len(num_cols) >= 2:
 
 action_left, action_right = st.columns(2)
 with action_left:
-    st.button("Generate Report", use_container_width=True, disabled=True)
+    if st.button("Generate Report", use_container_width=True):
+        st.switch_page("pages/7_Export_Report.py")
 with action_right:
-    st.button("Download Dashboard", use_container_width=True, disabled=True)
+    if st.button("Download Dashboard", use_container_width=True):
+        st.switch_page("pages/7_Export_Report.py")
 
 st.markdown(
     """

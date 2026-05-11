@@ -5,7 +5,8 @@ import plotly.express as px
 from sklearn.linear_model import LinearRegression, Ridge, LogisticRegression
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.model_selection import train_test_split, cross_val_score, KFold, StratifiedKFold
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder, StandardScaler, LabelEncoder
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import (
     mean_squared_error, r2_score,
@@ -165,7 +166,11 @@ def analyse_features(df, excluded_cols=None):
     return result
 
 
-numeric_feature_pool = df.select_dtypes(include=["number"]).columns.tolist()
+feature_info = analyse_features(df, [])
+numeric_features = [c for c, v in feature_info.items() if v["type"] == "numeric"]
+categorical_features = [c for c, v in feature_info.items() if v["type"] == "categorical"]
+feature_pool = numeric_features + categorical_features
+numeric_feature_pool = numeric_features
 
 # ── Hero ──────────────────────────────────────────────────────
 st.markdown('<div class="pred-shell">', unsafe_allow_html=True)
@@ -261,7 +266,7 @@ with cfg_left:
     )
 with cfg_right:
     excluded = set(target_cols)
-    available_features = [c for c in numeric_feature_pool if c not in excluded]
+    available_features = [c for c in feature_pool if c not in excluded]
     feature_cols = st.multiselect(
         "📊 Feature Columns (predictors)",
         available_features,
@@ -304,6 +309,15 @@ if st.button("🚀 Train & Run Prediction Model", use_container_width=True):
 
             X = clean_df[feature_cols]
             y_raw = clean_df[target_col]
+            feature_info = analyse_features(df, [target_col])
+            numeric_features = [
+                c for c, v in feature_info.items()
+                if v["type"] == "numeric" and c in feature_cols and c != target_col
+            ]
+            categorical_features = [
+                c for c, v in feature_info.items()
+                if v["type"] == "categorical" and c in feature_cols and c != target_col
+            ]
 
             le = None
             if task_type == "classification":
@@ -317,14 +331,23 @@ if st.button("🚀 Train & Run Prediction Model", use_container_width=True):
                 if len(class_counts) < 2 or class_counts.min() < 2:
                     st.error(f"❌ '{target_col}': each class needs at least 2 rows for training and testing — skipping.")
                     continue
+                import math
+                n_classes = len(class_counts)
+                test_count = max(n_classes, math.ceil(0.2 * len(clean_df)))
+                test_size = min(test_count / len(clean_df), 0.4)
                 stratify_y = y
             else:
                 class_counts = None
                 stratify_y = None
+                test_size = 0.2
 
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=0.2, random_state=42, stratify=stratify_y
-            )
+            try:
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X, y, test_size=test_size, random_state=42, stratify=stratify_y
+                )
+            except ValueError as e:
+                st.error(f"Cannot split dataset: {e}. Try adding more rows.")
+                st.stop()
 
             if task_type == "regression":
                 if model_choice == "Linear / Logistic Regression":
@@ -341,7 +364,11 @@ if st.button("🚀 Train & Run Prediction Model", use_container_width=True):
                     base_model = RandomForestClassifier(n_estimators=100, random_state=42)
                 scoring = "f1_weighted"
 
-            pipeline = Pipeline([("scaler", StandardScaler()), ("model", base_model)])
+            preprocess = ColumnTransformer([
+                ("num", StandardScaler(), numeric_features),
+                ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_features),
+            ])
+            pipeline = Pipeline([("prep", preprocess), ("model", base_model)])
             pipeline.fit(X_train, y_train)
             y_pred = pipeline.predict(X_test)
 
@@ -385,8 +412,9 @@ if st.button("🚀 Train & Run Prediction Model", use_container_width=True):
                 coef = pipeline.named_steps["model"].coef_
                 importances = np.abs(coef).mean(axis=0) if coef.ndim > 1 else np.abs(coef)
 
+            feature_names = pipeline.named_steps["prep"].get_feature_names_out()
             imp_df = (
-                pd.DataFrame({"Feature": feature_cols, "Importance": importances})
+                pd.DataFrame({"Feature": feature_names, "Importance": importances})
                 .sort_values("Importance", ascending=False)
             )
 
@@ -400,7 +428,7 @@ if st.button("🚀 Train & Run Prediction Model", use_container_width=True):
                 "y_pred":        y_pred,
                 "le":            le,
             }
-            st.session_state["pred_clean_means"][target_col] = X.mean().to_dict()
+            st.session_state["pred_clean_means"][target_col] = X[numeric_features].mean().to_dict()
 
     st.success("✅ All models trained!")
 

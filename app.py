@@ -431,6 +431,20 @@ if uploaded_file is not None:
 
         # Run automated cleaning only once
         if 'auto_done' not in st.session_state:
+            preview_changes = []
+            n_dupes = df.duplicated().sum()
+            if n_dupes:
+                preview_changes.append(f'{n_dupes} duplicate rows will be removed.')
+            n_missing = df.isnull().sum().sum()
+            if n_missing:
+                preview_changes.append(f'{n_missing} missing values will be filled.')
+
+            if preview_changes:
+                st.info('Auto-clean will make these changes:\n' +
+                        '\n'.join(f'• {c}' for c in preview_changes))
+                if not st.button('Confirm and apply auto-clean'):
+                    st.stop()
+
             push_undo()  # save pre-cleaning snapshot
             actions = []
             roles = st.session_state.get('column_roles', {})

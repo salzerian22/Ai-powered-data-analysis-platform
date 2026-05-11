@@ -249,6 +249,23 @@ if df is None:
     st.warning("⚠️ No data found! Please upload a file on the Home page first.")
     st.stop()
 
+if not st.session_state.get("groq_consent"):
+    st.warning(
+        "AI features will send dataset column names, statistics, and "
+        "up to 5 sample rows to Groq. Do not use with sensitive or "
+        "personal data."
+    )
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("I understand — enable AI features"):
+            st.session_state["groq_consent"] = True
+            st.rerun()
+    with col2:
+        if st.button("Statistics only (no sample rows)"):
+            st.session_state["groq_consent"] = "stats_only"
+            st.rerun()
+    st.stop()
+
 
 def score_graph(x, y, data_frame, corr=None, is_time=False):
     score = 50
@@ -738,6 +755,10 @@ generate_pdf = st.button("📥 Generate & Download Dashboard PDF", use_container
 
 
 if generate_pdf:
+    if not any([overview_include, cleaning_include, outlier_include, quality_include, viz_include, ai_include, predictive_include]):
+        st.warning("Select at least one section before generating the PDF.")
+        st.stop()
+
     from fpdf import FPDF
 
     with st.spinner("Building your dashboard report... ⏳"):
@@ -852,46 +873,48 @@ if generate_pdf:
             pdf.set_text_color(40, 40, 40)
             pdf.set_x(pdf.l_margin)
 
-        section_header("Executive Summary")
-        body_text()
+        if ai_include:
+            section_header("Executive Summary")
+            body_text()
 
-        exec_summary = generate_executive_summary()
-        for line in exec_summary.split("\n"):
-            line = line.strip()
-            if line:
-                pdf.set_x(pdf.l_margin)
-                try:
-                    pdf.multi_cell(0, 7, safe_text(line))
-                except Exception:
+            exec_summary = generate_executive_summary()
+            for line in exec_summary.split("\n"):
+                line = line.strip()
+                if line:
                     pdf.set_x(pdf.l_margin)
-                    pdf.cell(0, 7, safe_text(line[:120]), ln=True)
-        pdf.ln(8)
+                    try:
+                        pdf.multi_cell(0, 7, safe_text(line))
+                    except Exception:
+                        pdf.set_x(pdf.l_margin)
+                        pdf.cell(0, 7, safe_text(line[:120]), ln=True)
+            pdf.ln(8)
 
-        section_header("Dataset Overview")
-        body_text()
+        if overview_include:
+            section_header("Dataset Overview")
+            body_text()
 
-        memory_mb = df.memory_usage(deep=True).sum() / (1024 * 1024)
-        total_cells = df.shape[0] * df.shape[1]
-        missing_pct = (df.isnull().sum().sum() / total_cells * 100) if total_cells > 0 else 0
+            memory_mb = df.memory_usage(deep=True).sum() / (1024 * 1024)
+            total_cells = df.shape[0] * df.shape[1]
+            missing_pct = (df.isnull().sum().sum() / total_cells * 100) if total_cells > 0 else 0
 
-        metrics = [
-            ("Total Rows", str(df.shape[0])),
-            ("Total Columns", str(df.shape[1])),
-            ("Missing Values", f"{df.isnull().sum().sum()} ({missing_pct:.1f}%)"),
-            ("Duplicate Rows", str(df.duplicated().sum())),
-            ("Memory Usage", f"{memory_mb:.2f} MB"),
-            ("Numeric Columns", str(len(df.select_dtypes(include=['number']).columns))),
-        ]
+            metrics = [
+                ("Total Rows", str(df.shape[0])),
+                ("Total Columns", str(df.shape[1])),
+                ("Missing Values", f"{df.isnull().sum().sum()} ({missing_pct:.1f}%)"),
+                ("Duplicate Rows", str(df.duplicated().sum())),
+                ("Memory Usage", f"{memory_mb:.2f} MB"),
+                ("Numeric Columns", str(len(df.select_dtypes(include=['number']).columns))),
+            ]
 
-        for i, (label, value) in enumerate(metrics):
-            pdf.cell(90, 8, safe_text(f"  {label}: {value}"), ln=False)
-            if i % 2 == 1:
+            for i, (label, value) in enumerate(metrics):
+                pdf.cell(90, 8, safe_text(f"  {label}: {value}"), ln=False)
+                if i % 2 == 1:
+                    pdf.ln()
+            if len(metrics) % 2 == 1:
                 pdf.ln()
-        if len(metrics) % 2 == 1:
-            pdf.ln()
-        pdf.ln(10)
+            pdf.ln(10)
 
-        if include_charts:
+        if viz_include and include_charts:
             roles = st.session_state.get("column_roles", get_column_roles(df))
             export_df, graph_options = build_export_graph_options(df, roles)
             charts_generated = []
@@ -937,86 +960,93 @@ if generate_pdf:
                 if used_fallback_renderer:
                     st.info("Visualization charts were rendered with a PDF-safe fallback so they remain visible in the exported report.")
 
-        pdf.add_page()
-        section_header("Data Quality Summary")
-        body_text()
+        if quality_include or outlier_include:
+            pdf.add_page()
+            numeric_df = df.select_dtypes(include=["number"])
 
-        completeness = (1 - df.isnull().sum().sum() / total_cells) * 100 if total_cells > 0 else 100
-        pdf.cell(0, 8, safe_text(f"  Completeness: {completeness:.1f}%"), ln=True)
-        pdf.cell(0, 8, safe_text(f"  Duplicate Rows: {df.duplicated().sum()}"), ln=True)
-        pdf.ln(3)
+            if quality_include:
+                section_header("Data Quality Summary")
+                body_text()
 
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.set_text_color(0, 80, 160)
-        pdf.cell(0, 8, safe_text("Outlier Detection (IQR Method)"), ln=True)
-        body_text()
+                total_cells = df.shape[0] * df.shape[1]
+                completeness = (1 - df.isnull().sum().sum() / total_cells) * 100 if total_cells > 0 else 100
+                pdf.cell(0, 8, safe_text(f"  Completeness: {completeness:.1f}%"), ln=True)
+                pdf.cell(0, 8, safe_text(f"  Duplicate Rows: {df.duplicated().sum()}"), ln=True)
+                pdf.ln(3)
 
-        numeric_df = df.select_dtypes(include=["number"])
-        if not numeric_df.empty:
-            for col in numeric_df.columns:
-                Q1 = numeric_df[col].quantile(0.25)
-                Q3 = numeric_df[col].quantile(0.75)
-                IQR = Q3 - Q1
-                lower = Q1 - 1.5 * IQR
-                upper = Q3 + 1.5 * IQR
-                outlier_count = len(numeric_df[(numeric_df[col] < lower) | (numeric_df[col] > upper)])
-                pdf.cell(0, 7, safe_text(f"  {col}: {outlier_count} outliers  |  Bounds: [{lower:.2f}, {upper:.2f}]"), ln=True)
-        pdf.ln(5)
+            if outlier_include:
+                pdf.set_font("Helvetica", "B", 12)
+                pdf.set_text_color(0, 80, 160)
+                pdf.cell(0, 8, safe_text("Outlier Detection (IQR Method)"), ln=True)
+                body_text()
 
-        section_header("Statistical Summary")
+                if not numeric_df.empty:
+                    for col in numeric_df.columns:
+                        Q1 = numeric_df[col].quantile(0.25)
+                        Q3 = numeric_df[col].quantile(0.75)
+                        IQR = Q3 - Q1
+                        lower = Q1 - 1.5 * IQR
+                        upper = Q3 + 1.5 * IQR
+                        outlier_count = len(numeric_df[(numeric_df[col] < lower) | (numeric_df[col] > upper)])
+                        pdf.cell(0, 7, safe_text(f"  {col}: {outlier_count} outliers  |  Bounds: [{lower:.2f}, {upper:.2f}]"), ln=True)
+                pdf.ln(5)
 
-        if not numeric_df.empty:
-            stats_df = numeric_df.describe()
-            cols_to_show = list(stats_df.columns)[:6]
-            usable_w = pdf.w - pdf.l_margin - pdf.r_margin
-            col_width = usable_w / (len(cols_to_show) + 1)
+            if quality_include:
+                section_header("Statistical Summary")
 
-            pdf.set_x(pdf.l_margin)
-            pdf.set_font("Helvetica", "B", 9)
-            pdf.set_fill_color(0, 100, 200)
-            pdf.set_text_color(255, 255, 255)
-            pdf.cell(col_width, 7, "Stat", border=1, fill=True, align="C")
-            for col in cols_to_show:
-                pdf.cell(col_width, 7, safe_text(str(col)[:12]), border=1, fill=True, align="C")
-            pdf.ln()
+                if not numeric_df.empty:
+                    stats_df = numeric_df.describe()
+                    cols_to_show = list(stats_df.columns)[:6]
+                    usable_w = pdf.w - pdf.l_margin - pdf.r_margin
+                    col_width = usable_w / (len(cols_to_show) + 1)
 
-            pdf.set_font("Helvetica", "", 9)
-            pdf.set_text_color(40, 40, 40)
-            for stat in stats_df.index:
-                pdf.set_x(pdf.l_margin)
-                pdf.set_fill_color(245, 248, 255)
-                pdf.cell(col_width, 6, str(stat), border=1, fill=True, align="C")
-                for col in cols_to_show:
-                    val = stats_df[col][stat]
-                    pdf.cell(col_width, 6, f"{val:.2f}", border=1, align="C")
-                pdf.ln()
-        pdf.ln(5)
-
-        section_header("Methodology")
-        body_text()
-
-        auto_actions = st.session_state.get("auto_actions", [])
-        if auto_actions:
-            pdf.set_font("Helvetica", "B", 11)
-            pdf.cell(0, 8, "Automated Cleaning Applied:", ln=True)
-            pdf.set_font("Helvetica", "", 10)
-            for action in auto_actions:
-                pdf.set_x(pdf.l_margin)
-                try:
-                    pdf.multi_cell(0, 6, safe_text(f"  - {action}"))
-                except Exception:
                     pdf.set_x(pdf.l_margin)
-                    pdf.cell(0, 6, safe_text(f"  - {action}"[:80]), ln=True)
-            pdf.ln(3)
+                    pdf.set_font("Helvetica", "B", 9)
+                    pdf.set_fill_color(0, 100, 200)
+                    pdf.set_text_color(255, 255, 255)
+                    pdf.cell(col_width, 7, "Stat", border=1, fill=True, align="C")
+                    for col in cols_to_show:
+                        pdf.cell(col_width, 7, safe_text(str(col)[:12]), border=1, fill=True, align="C")
+                    pdf.ln()
 
-        roles = st.session_state.get("column_roles", {})
-        if roles:
-            pdf.set_font("Helvetica", "B", 11)
-            pdf.cell(0, 8, "Column Role Classifications:", ln=True)
-            pdf.set_font("Helvetica", "", 10)
-            for col, role in roles.items():
-                pdf.cell(0, 6, safe_text(f"  - {col}: {role}"), ln=True)
-        pdf.ln(5)
+                    pdf.set_font("Helvetica", "", 9)
+                    pdf.set_text_color(40, 40, 40)
+                    for stat in stats_df.index:
+                        pdf.set_x(pdf.l_margin)
+                        pdf.set_fill_color(245, 248, 255)
+                        pdf.cell(col_width, 6, str(stat), border=1, fill=True, align="C")
+                        for col in cols_to_show:
+                            val = stats_df[col][stat]
+                            pdf.cell(col_width, 6, f"{val:.2f}", border=1, align="C")
+                        pdf.ln()
+                pdf.ln(5)
+
+        if cleaning_include:
+            section_header("Methodology")
+            body_text()
+
+            auto_actions = st.session_state.get("auto_actions", [])
+            if auto_actions:
+                pdf.set_font("Helvetica", "B", 11)
+                pdf.cell(0, 8, "Automated Cleaning Applied:", ln=True)
+                pdf.set_font("Helvetica", "", 10)
+                for action in auto_actions:
+                    pdf.set_x(pdf.l_margin)
+                    try:
+                        pdf.multi_cell(0, 6, safe_text(f"  - {action}"))
+                    except Exception:
+                        pdf.set_x(pdf.l_margin)
+                        pdf.cell(0, 6, safe_text(f"  - {action}"[:80]), ln=True)
+                pdf.ln(3)
+
+            roles = st.session_state.get("column_roles", {})
+            if roles:
+                pdf.set_font("Helvetica", "B", 11)
+                pdf.cell(0, 8, "Column Role Classifications:", ln=True)
+                pdf.set_font("Helvetica", "", 10)
+                for col, role in roles.items():
+                    pdf.cell(0, 6, safe_text(f"  - {col}: {role}"), ln=True)
+            pdf.ln(5)
 
         pdf.set_font("Helvetica", "I", 9)
         pdf.set_text_color(150, 150, 150)
