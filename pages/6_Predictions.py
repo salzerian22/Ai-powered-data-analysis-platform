@@ -13,6 +13,27 @@ from sklearn.metrics import (
     accuracy_score, f1_score, classification_report,
 )
 from sklearn.dummy import DummyRegressor, DummyClassifier
+from sklearn.linear_model import Lasso
+from sklearn.tree import DecisionTreeRegressor, DecisionTreeClassifier
+from sklearn.ensemble import GradientBoostingRegressor, GradientBoostingClassifier
+from sklearn.neighbors import KNeighborsRegressor, KNeighborsClassifier
+from sklearn.svm import SVR, SVC
+from sklearn.naive_bayes import GaussianNB
+from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
+from sklearn.decomposition import PCA
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder, LabelEncoder
+from sklearn.metrics import (
+    mean_absolute_error,
+    confusion_matrix,
+    ConfusionMatrixDisplay,
+)
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import math
+import io
 import sys, os
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
@@ -166,6 +187,332 @@ def analyse_features(df, excluded_cols=None):
     return result
 
 
+def profile_dataset(df: pd.DataFrame, target_col: str | None,
+                    feature_cols: list[str]) -> dict:
+    """
+    Profiles the dataset and returns a dict of characteristics used
+    for model recommendation and suitability warnings.
+    """
+    profile = {
+        "n_rows": len(df),
+        "n_features": len(feature_cols),
+        "task_type": None,
+        "has_text_cols": False,
+        "has_date_cols": False,
+        "has_categorical_features": False,
+        "class_imbalance": False,
+        "high_cardinality_cols": [],
+        "missing_pct": 0.0,
+        "is_small_dataset": len(df) < 200,
+        "is_very_small_dataset": len(df) < 50,
+        "warnings": [],
+        "special_modes": [],
+    }
+
+    # Task type detection
+    if target_col and target_col in df.columns:
+        target_series = df[target_col].dropna()
+        n_unique_target = target_series.nunique()
+        if pd.api.types.is_numeric_dtype(df[target_col]) and n_unique_target > 20:
+            profile["task_type"] = "regression"
+        elif n_unique_target <= 20:
+            profile["task_type"] = "classification"
+        elif pd.api.types.is_object_dtype(df[target_col]) and n_unique_target > 20:
+            profile["task_type"] = "skip"
+            profile["warnings"].append(
+                f"⚠️ Target '{target_col}' has {n_unique_target} unique text "
+                f"values — too many for classification."
+            )
+    else:
+        profile["task_type"] = "clustering"
+        profile["special_modes"].append("clustering")
+
+    # Feature characteristics
+    for col in feature_cols:
+        if col not in df.columns:
+            continue
+        if pd.api.types.is_object_dtype(df[col]):
+            n_uniq = df[col].nunique()
+            if n_uniq > 50:
+                profile["high_cardinality_cols"].append(col)
+                profile["warnings"].append(
+                    f"⚠️ Feature '{col}' has {n_uniq} unique categories "
+                    f"(high cardinality) — may slow training."
+                )
+            elif n_uniq > 1:
+                profile["has_categorical_features"] = True
+        # Date detection
+        col_lower = col.lower()
+        if any(h in col_lower for h in ["date", "time", "month", "day", "year", "timestamp"]):
+            profile["has_date_cols"] = True
+            profile["special_modes"].append("time_series")
+            profile["warnings"].append(
+                f"⚠️ Column '{col}' looks like a date — "
+                f"use chronological split instead of random split."
+            )
+        # Text detection
+        if pd.api.types.is_object_dtype(df[col]) and df[col].dropna().str.split().str.len().mean() > 4:
+            profile["has_text_cols"] = True
+            profile["special_modes"].append("nlp")
+
+    # Missing values
+    selected = [c for c in feature_cols + ([target_col] if target_col else []) if c in df.columns]
+    if selected:
+        total_cells = len(df) * len(selected)
+        missing_cells = df[selected].isnull().sum().sum()
+        profile["missing_pct"] = round((missing_cells / total_cells) * 100, 1) if total_cells > 0 else 0
+        if profile["missing_pct"] > 0:
+            rows_lost = len(df) - len(df[selected].dropna())
+            profile["warnings"].append(
+                f"⚠️ {profile['missing_pct']}% missing data — "
+                f"~{rows_lost} rows will be dropped during training."
+            )
+
+    # Class imbalance check (classification only)
+    if profile["task_type"] == "classification" and target_col and target_col in df.columns:
+        counts = df[target_col].value_counts(normalize=True)
+        if counts.max() > 0.80:
+            profile["class_imbalance"] = True
+            profile["warnings"].append(
+                f"⚠️ Class imbalance detected — '{counts.idxmax()}' dominates "
+                f"({counts.max()*100:.0f}%). Accuracy alone may be misleading."
+            )
+
+    # Size warnings
+    if profile["is_very_small_dataset"]:
+        profile["warnings"].append(
+            f"⚠️ Only {len(df)} rows — results may be unreliable. "
+            f"Consider adding more data."
+        )
+    elif profile["is_small_dataset"]:
+        profile["warnings"].append(
+            f"⚠️ Small dataset ({len(df)} rows) — avoid complex models "
+            f"like Gradient Boosting or SVM."
+        )
+
+    return profile
+
+
+def get_model_catalogue(task_type: str, profile: dict) -> list[dict]:
+    """
+    Returns an ordered list of model dicts for the given task.
+    Each dict: {name, model_obj, tag, reason, recommended, badge}
+    tag values: "✅ Recommended" | "⚠️ Use with caution" | "🔵 Baseline"
+    """
+    n = profile["n_rows"]
+    has_cat = profile["has_categorical_features"]
+    is_small = profile["is_small_dataset"]
+
+    if task_type == "regression":
+        return [
+            {
+                "name": "Random Forest Regressor",
+                "model_obj": "RandomForestRegressor(n_estimators=100, random_state=42)",
+                "tag": "✅ Recommended",
+                "reason": "Best for mixed numeric/categorical tabular data. Handles non-linearity well.",
+                "recommended": True,
+                "badge": "badge-reg",
+            },
+            {
+                "name": "Gradient Boosting Regressor",
+                "model_obj": "GradientBoostingRegressor(n_estimators=100, random_state=42)",
+                "tag": "✅ Recommended",
+                "reason": "Strong for structured prediction. Often top performer on tabular data.",
+                "recommended": True,
+                "badge": "badge-reg",
+            },
+            {
+                "name": "Decision Tree Regressor",
+                "model_obj": "DecisionTreeRegressor(max_depth=6, random_state=42)",
+                "tag": "⚠️ Use with caution",
+                "reason": "Interpretable but prone to overfitting without depth limit.",
+                "recommended": False,
+                "badge": "badge-skip",
+            },
+            {
+                "name": "KNN Regressor",
+                "model_obj": "KNeighborsRegressor(n_neighbors=5)",
+                "tag": "⚠️ Use with caution" if not is_small else "✅ Recommended",
+                "reason": "Good for small datasets. Slow on large data.",
+                "recommended": is_small,
+                "badge": "badge-reg" if is_small else "badge-skip",
+            },
+            {
+                "name": "Ridge Regression",
+                "model_obj": "Ridge()",
+                "tag": "🔵 Baseline",
+                "reason": "Regularized linear model. Fast and stable baseline.",
+                "recommended": False,
+                "badge": "badge-cls",
+            },
+            {
+                "name": "Lasso Regression",
+                "model_obj": "Lasso()",
+                "tag": "🔵 Baseline",
+                "reason": "Forces sparse features. Good when many features are irrelevant.",
+                "recommended": False,
+                "badge": "badge-cls",
+            },
+            {
+                "name": "Linear Regression",
+                "model_obj": "LinearRegression()",
+                "tag": "🔵 Baseline",
+                "reason": "Simplest baseline. May underfit non-linear relationships.",
+                "recommended": False,
+                "badge": "badge-cls",
+            },
+            {
+                "name": "SVR",
+                "model_obj": "SVR()",
+                "tag": "⚠️ Use with caution",
+                "reason": "Works well on small datasets. Too slow for large data.",
+                "recommended": False,
+                "badge": "badge-skip",
+            },
+        ]
+
+    elif task_type == "classification":
+        return [
+            {
+                "name": "Random Forest Classifier",
+                "model_obj": "RandomForestClassifier(n_estimators=100, random_state=42)",
+                "tag": "✅ Recommended",
+                "reason": "Robust to noise. Handles mixed feature types well.",
+                "recommended": True,
+                "badge": "badge-cls",
+            },
+            {
+                "name": "Gradient Boosting Classifier",
+                "model_obj": "GradientBoostingClassifier(n_estimators=100, random_state=42)",
+                "tag": "✅ Recommended",
+                "reason": "High accuracy on structured tabular classification tasks.",
+                "recommended": True,
+                "badge": "badge-cls",
+            },
+            {
+                "name": "Decision Tree Classifier",
+                "model_obj": "DecisionTreeClassifier(max_depth=6, random_state=42)",
+                "tag": "⚠️ Use with caution",
+                "reason": "Highly interpretable but overfits easily.",
+                "recommended": False,
+                "badge": "badge-skip",
+            },
+            {
+                "name": "KNN Classifier",
+                "model_obj": "KNeighborsClassifier(n_neighbors=5)",
+                "tag": "⚠️ Use with caution",
+                "reason": "Good for small, balanced datasets. Slow at scale.",
+                "recommended": False,
+                "badge": "badge-skip",
+            },
+            {
+                "name": "SVM Classifier",
+                "model_obj": "SVC(probability=True, random_state=42)",
+                "tag": "⚠️ Use with caution",
+                "reason": "Strong for binary classification. Slow on large datasets.",
+                "recommended": False,
+                "badge": "badge-skip",
+            },
+            {
+                "name": "Naive Bayes",
+                "model_obj": "GaussianNB()",
+                "tag": "🔵 Baseline",
+                "reason": "Very fast. Works well for simple or text classification.",
+                "recommended": False,
+                "badge": "badge-cls",
+            },
+            {
+                "name": "Logistic Regression",
+                "model_obj": "LogisticRegression(max_iter=500, random_state=42)",
+                "tag": "🔵 Baseline",
+                "reason": "Linear baseline for classification. Fast and interpretable.",
+                "recommended": False,
+                "badge": "badge-cls",
+            },
+        ]
+
+    elif task_type == "clustering":
+        return [
+            {
+                "name": "KMeans",
+                "model_obj": "KMeans(n_clusters=3, random_state=42, n_init='auto')",
+                "tag": "✅ Recommended",
+                "reason": "Best general-purpose clustering. Fast and interpretable.",
+                "recommended": True,
+                "badge": "badge-reg",
+            },
+            {
+                "name": "Agglomerative Clustering",
+                "model_obj": "AgglomerativeClustering(n_clusters=3)",
+                "tag": "✅ Recommended",
+                "reason": "Hierarchical clustering — no need to specify cluster count upfront.",
+                "recommended": True,
+                "badge": "badge-reg",
+            },
+            {
+                "name": "DBSCAN",
+                "model_obj": "DBSCAN(eps=0.5, min_samples=5)",
+                "tag": "⚠️ Use with caution",
+                "reason": "Finds arbitrary shapes. Sensitive to eps parameter.",
+                "recommended": False,
+                "badge": "badge-skip",
+            },
+        ]
+
+    return []
+
+
+def build_preprocessor(X: pd.DataFrame) -> tuple:
+    """
+    Build a ColumnTransformer that handles numeric and categorical
+    columns automatically. Returns (preprocessor, numeric_cols,
+    categorical_cols).
+    """
+    numeric_cols = X.select_dtypes(include=["number"]).columns.tolist()
+    categorical_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
+
+    transformers = []
+    if numeric_cols:
+        from sklearn.preprocessing import StandardScaler
+        transformers.append(("num", StandardScaler(), numeric_cols))
+    if categorical_cols:
+        transformers.append((
+            "cat",
+            OneHotEncoder(handle_unknown="ignore", sparse_output=False),
+            categorical_cols,
+        ))
+
+    if not transformers:
+        from sklearn.preprocessing import FunctionTransformer
+        preprocessor = FunctionTransformer()
+    else:
+        preprocessor = ColumnTransformer(transformers, remainder="drop")
+
+    return preprocessor, numeric_cols, categorical_cols
+
+
+def extract_date_features(df: pd.DataFrame, date_cols: list[str]) -> pd.DataFrame:
+    """
+    Extract year, month, day, weekday from detected date columns.
+    Returns a new DataFrame with date columns replaced by numeric features.
+    """
+    df = df.copy()
+    for col in date_cols:
+        if col not in df.columns:
+            continue
+        try:
+            parsed = pd.to_datetime(df[col], errors="coerce")
+            if parsed.notna().sum() > 0:
+                df[f"{col}_year"]    = parsed.dt.year
+                df[f"{col}_month"]   = parsed.dt.month
+                df[f"{col}_day"]     = parsed.dt.day
+                df[f"{col}_weekday"] = parsed.dt.weekday
+                df.drop(columns=[col], inplace=True)
+        except Exception:
+            pass
+    return df
+
+
 feature_info = analyse_features(df, [])
 numeric_features = [c for c, v in feature_info.items() if v["type"] == "numeric"]
 categorical_features = [c for c, v in feature_info.items() if v["type"] == "categorical"]
@@ -253,32 +600,33 @@ divider()
 
 # ── Configuration ─────────────────────────────────────────────
 st.markdown("### ⚙️ Configure Your Model")
-st.markdown("<p style='color:#aad4ff'>Select one or more target columns to predict</p>", unsafe_allow_html=True)
+st.markdown(
+    "<p style='color:#aad4ff'>Select target and features — "
+    "model recommendations update automatically.</p>",
+    unsafe_allow_html=True,
+)
 
 all_predictable = list(predictable_cols.keys())
 cfg_left, cfg_right = st.columns(2)
+
 with cfg_left:
     target_cols = st.multiselect(
         "🎯 Target Columns (what to predict)",
         options=all_predictable,
         default=[all_predictable[0]] if all_predictable else [],
-        help="Only columns suitable for prediction are shown. Regression = continuous. Classification = categorical / low-cardinality.",
-    )
-with cfg_right:
-    excluded = set(target_cols)
-    available_features = [c for c in feature_pool if c not in excluded]
-    feature_cols = st.multiselect(
-        "📊 Feature Columns (predictors)",
-        available_features,
-        default=available_features[:min(5, len(available_features))],
-        help="Feature options are auto-filtered from the dataset analysis to keep only usable predictor columns.",
+        help="Regression = continuous numeric. Classification = categorical/low-cardinality.",
     )
 
-model_choice = st.selectbox(
-    "🤖 Select Model",
-    ["Linear / Logistic Regression", "Ridge", "Random Forest"],
-    key="model_choice",
-)
+with cfg_right:
+    excluded = set(target_cols)
+    feature_info = analyse_features(df, list(excluded))
+    all_feature_candidates = list(feature_info.keys())
+    feature_cols = st.multiselect(
+        "📊 Feature Columns (predictors — numeric AND categorical)",
+        all_feature_candidates,
+        default=all_feature_candidates[:min(5, len(all_feature_candidates))],
+        help="Both numeric and categorical columns are supported.",
+    )
 
 if not target_cols:
     st.warning("⚠️ Please select at least one target column.")
@@ -287,37 +635,143 @@ if not feature_cols:
     st.warning("⚠️ Please select at least one feature column.")
     st.stop()
 
+# ── Dataset profile + warnings ─────────────────────────────────
+first_target = target_cols[0] if target_cols else None
+profile = profile_dataset(df, first_target, feature_cols)
+
+if profile["warnings"]:
+    with st.expander("⚠️ Dataset Suitability Warnings", expanded=True):
+        for w in profile["warnings"]:
+            st.warning(w)
+
+# ── Auto Model Recommendation panel ───────────────────────────
+task_type_for_reco = profile["task_type"] or "regression"
+catalogue = get_model_catalogue(task_type_for_reco, profile)
+model_names = [m["name"] for m in catalogue]
+
+if "nlp" in profile["special_modes"]:
+    st.info(
+        "📝 Text columns detected. Consider using TF-IDF + Logistic Regression "
+        "or Naive Bayes for text classification."
+    )
+if "time_series" in profile["special_modes"]:
+    st.info(
+        "📅 Date columns detected. Features extracted automatically. "
+        "Consider chronological train/test split."
+    )
+
+st.markdown("#### 🤖 Recommended Models for This Dataset")
+rec_cols = st.columns(min(len(catalogue), 3))
+for i, m in enumerate(catalogue):
+    col_idx = i % min(len(catalogue), 3)
+    border_color = (
+        "rgba(98,255,162,0.5)"  if m["tag"].startswith("✅") else
+        "rgba(255,213,104,0.5)" if m["tag"].startswith("⚠️") else
+        "rgba(100,160,255,0.4)"
+    )
+    with rec_cols[col_idx]:
+        st.markdown(
+            f"""
+            <div style="padding:0.8rem;border-radius:12px;margin-bottom:0.6rem;
+                        border:1px solid {border_color};
+                        background:linear-gradient(180deg,rgba(18,28,50,0.98),
+                        rgba(10,18,35,1));">
+              <div style="font-weight:700;color:#f0f6ff;font-size:0.9rem;">
+                {m['tag']} &nbsp;{m['name']}
+              </div>
+              <div style="color:#a0b8d8;font-size:0.8rem;margin-top:0.35rem;">
+                {m['reason']}
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+model_choice = st.selectbox(
+    "🤖 Select Model to Train",
+    model_names,
+    index=0,
+    help="Recommended models are listed first.",
+    key="model_choice",
+)
+
+# Show "Why recommended?" for selected model
+selected_meta = next((m for m in catalogue if m["name"] == model_choice), None)
+if selected_meta:
+    tag_color = (
+        "#7fffc4" if selected_meta["tag"].startswith("✅") else
+        "#ffd875" if selected_meta["tag"].startswith("⚠️") else
+        "#80c7ff"
+    )
+    st.markdown(
+        f"<p style='color:{tag_color};font-size:0.88rem;margin-top:0.2rem;'>"
+        f"{selected_meta['tag']} — {selected_meta['reason']}</p>",
+        unsafe_allow_html=True,
+    )
+
+# Run-all toggle
+run_all_models = st.checkbox(
+    "🏁 Run All Recommended Models and compare",
+    value=False,
+    help="Trains all ✅ Recommended models and shows a comparison table.",
+)
+
 # ── Train ─────────────────────────────────────────────────────
-if st.button("🚀 Train & Run Prediction Model", use_container_width=True):
-    st.session_state["pred_models"]        = {}
-    st.session_state["pred_feature_cols"]  = feature_cols
-    st.session_state["pred_target_cols"]   = target_cols
-    st.session_state["pred_clean_means"]   = {}
-    st.session_state["pred_model_choice"]  = model_choice
+if st.button("🚀 Train & Evaluate Model", use_container_width=True):
+    st.session_state["pred_models"]       = {}
+    st.session_state["pred_feature_cols"] = feature_cols
+    st.session_state["pred_target_cols"]  = target_cols
+    st.session_state["pred_model_choice"] = model_choice
+    st.session_state["pred_profile"]      = profile
+    st.session_state["pred_catalogue"]    = catalogue
+    st.session_state["pred_run_all"]      = run_all_models
+    st.session_state["pred_comparison"]   = []
+
+    # Build list of models to train
+    if run_all_models:
+        models_to_run = [m for m in catalogue if m["recommended"]]
+        if not any(m["name"] == model_choice for m in models_to_run):
+            models_to_run.insert(0, next(m for m in catalogue if m["name"] == model_choice))
+    else:
+        models_to_run = [m for m in catalogue if m["name"] == model_choice]
 
     with st.spinner("Training models... ⏳"):
         for target_col in target_cols:
             task_type = predictable_cols[target_col]["type"]
             selected_cols = feature_cols + [target_col]
-            clean_df = df[selected_cols].dropna()
+
+            # ── Preprocessing ──────────────────────────────
+            work_df = df[selected_cols].copy()
+
+            # Date feature extraction
+            date_hint_cols = [
+                c for c in feature_cols
+                if any(h in c.lower() for h in
+                       ["date","time","month","day","year","timestamp"])
+                and c in work_df.columns
+            ]
+            if date_hint_cols:
+                work_df = extract_date_features(work_df, date_hint_cols)
+
+            # Drop rows with missing values
+            clean_df = work_df.dropna()
             rows_dropped = len(df) - len(clean_df)
             if rows_dropped > 0:
-                st.warning(f"⚠️ '{target_col}': dropped {rows_dropped} rows with missing values.")
+                st.warning(
+                    f"⚠️ '{target_col}': dropped {rows_dropped} rows "
+                    f"with missing values."
+                )
             if len(clean_df) < 10:
-                st.error(f"❌ '{target_col}': only {len(clean_df)} rows after NaN removal — skipping.")
+                st.error(
+                    f"❌ '{target_col}': only {len(clean_df)} rows after "
+                    f"cleaning — skipping."
+                )
                 continue
 
-            X = clean_df[feature_cols]
+            # Separate X and y
+            actual_feature_cols = [c for c in clean_df.columns if c != target_col]
+            X = clean_df[actual_feature_cols]
             y_raw = clean_df[target_col]
-            feature_info = analyse_features(df, [target_col])
-            numeric_features = [
-                c for c, v in feature_info.items()
-                if v["type"] == "numeric" and c in feature_cols and c != target_col
-            ]
-            categorical_features = [
-                c for c, v in feature_info.items()
-                if v["type"] == "categorical" and c in feature_cols and c != target_col
-            ]
 
             le = None
             if task_type == "classification":
@@ -326,118 +780,260 @@ if st.button("🚀 Train & Run Prediction Model", use_container_width=True):
             else:
                 y = y_raw.values
 
+            # Guard: classification needs ≥2 classes with ≥2 rows each
             if task_type == "classification":
                 class_counts = pd.Series(y).value_counts()
                 if len(class_counts) < 2 or class_counts.min() < 2:
-                    st.error(f"❌ '{target_col}': each class needs at least 2 rows for training and testing — skipping.")
+                    st.error(
+                        f"❌ '{target_col}': each class needs ≥2 rows — skipping."
+                    )
                     continue
-                import math
-                n_classes = len(class_counts)
-                test_count = max(n_classes, math.ceil(0.2 * len(clean_df)))
-                test_size = min(test_count / len(clean_df), 0.4)
                 stratify_y = y
             else:
                 class_counts = None
                 stratify_y = None
-                test_size = 0.2
+
+            # Guard: multiclass split size (Fix 1.1)
+            n_classes = len(np.unique(y)) if task_type == "classification" else 1
+            test_count = max(n_classes, math.ceil(0.2 * len(clean_df)))
+            test_size = min(test_count / len(clean_df), 0.4)
 
             try:
                 X_train, X_test, y_train, y_test = train_test_split(
-                    X, y, test_size=test_size, random_state=42, stratify=stratify_y
+                    X, y,
+                    test_size=test_size,
+                    random_state=42,
+                    stratify=stratify_y,
                 )
             except ValueError as e:
-                st.error(f"Cannot split dataset: {e}. Try adding more rows.")
-                st.stop()
-
-            if task_type == "regression":
-                if model_choice == "Linear / Logistic Regression":
-                    base_model = LinearRegression()
-                elif model_choice == "Ridge":
-                    base_model = Ridge()
-                else:
-                    base_model = RandomForestRegressor(n_estimators=100, random_state=42)
-                scoring = "r2"
-            else:
-                if model_choice in ("Linear / Logistic Regression", "Ridge"):
-                    base_model = LogisticRegression(max_iter=500, random_state=42)
-                else:
-                    base_model = RandomForestClassifier(n_estimators=100, random_state=42)
-                scoring = "f1_weighted"
-
-            preprocess = ColumnTransformer([
-                ("num", StandardScaler(), numeric_features),
-                ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_features),
-            ])
-            pipeline = Pipeline([("prep", preprocess), ("model", base_model)])
-            pipeline.fit(X_train, y_train)
-            y_pred = pipeline.predict(X_test)
-
-            n_cv = min(5, max(2, len(clean_df) // 5))
-            if task_type == "classification":
-                n_cv = min(n_cv, int(class_counts.min()))
-                cv_strategy = StratifiedKFold(n_splits=n_cv, shuffle=True, random_state=42)
-            else:
-                cv_strategy = KFold(n_splits=n_cv, shuffle=True, random_state=42)
-
-            if task_type == "regression":
-                r2 = r2_score(y_test, y_pred)
-                mse = mean_squared_error(y_test, y_pred)
-                rmse = np.sqrt(mse)
-                dummy = DummyRegressor(strategy="mean")
-                dummy.fit(X_train, y_train)
-                dummy_r2 = r2_score(y_test, dummy.predict(X_test))
-                cv_scores = cross_val_score(pipeline, X, y, cv=cv_strategy, scoring="r2")
-                metrics = dict(r2=r2, mse=mse, rmse=rmse, dummy_r2=dummy_r2, cv_scores=cv_scores)
-            else:
-                acc = accuracy_score(y_test, y_pred)
-                f1 = f1_score(y_test, y_pred, average="weighted", zero_division=0)
-                dummy = DummyClassifier(strategy="most_frequent")
-                dummy.fit(X_train, y_train)
-                dummy_acc = accuracy_score(y_test, dummy.predict(X_test))
-                cv_scores = cross_val_score(pipeline, X, y, cv=cv_strategy, scoring="f1_weighted")
-                report_labels = np.unique(np.concatenate([y_test, y_pred]))
-                report = classification_report(
-                    y_test, y_pred,
-                    labels=report_labels,
-                    target_names=[str(le.inverse_transform([label])[0]) for label in report_labels],
-                    zero_division=0,
+                st.error(
+                    f"Cannot split '{target_col}': {e}. "
+                    f"Try adding more rows."
                 )
-                metrics = dict(acc=acc, f1=f1, dummy_acc=dummy_acc, cv_scores=cv_scores, report=report)
+                continue
 
-            if model_choice == "Random Forest":
-                importances = pipeline.named_steps["model"].feature_importances_
-            elif task_type == "regression":
-                importances = np.abs(pipeline.named_steps["model"].coef_)
-            else:
-                coef = pipeline.named_steps["model"].coef_
-                importances = np.abs(coef).mean(axis=0) if coef.ndim > 1 else np.abs(coef)
+            # Build preprocessor from actual feature types
+            preprocessor, num_cols, cat_cols = build_preprocessor(X)
 
-            feature_names = pipeline.named_steps["prep"].get_feature_names_out()
-            imp_df = (
-                pd.DataFrame({"Feature": feature_names, "Importance": importances})
-                .sort_values("Importance", ascending=False)
-            )
+            # Train each model in the run list
+            comparison_rows = []
+            for model_meta in models_to_run:
+                try:
+                    # Instantiate model from string repr
+                    model_obj = eval(model_meta["model_obj"], {
+                        "LinearRegression": LinearRegression,
+                        "Ridge": Ridge, "Lasso": Lasso,
+                        "DecisionTreeRegressor": DecisionTreeRegressor,
+                        "RandomForestRegressor": RandomForestRegressor,
+                        "GradientBoostingRegressor": GradientBoostingRegressor,
+                        "KNeighborsRegressor": KNeighborsRegressor,
+                        "SVR": SVR,
+                        "LogisticRegression": LogisticRegression,
+                        "DecisionTreeClassifier": DecisionTreeClassifier,
+                        "RandomForestClassifier": RandomForestClassifier,
+                        "GradientBoostingClassifier": GradientBoostingClassifier,
+                        "KNeighborsClassifier": KNeighborsClassifier,
+                        "SVC": SVC,
+                        "GaussianNB": GaussianNB,
+                        "KMeans": KMeans,
+                        "DBSCAN": DBSCAN,
+                        "AgglomerativeClustering": AgglomerativeClustering,
+                    })
 
-            st.session_state["pred_models"][target_col] = {
-                "pipeline":      pipeline,
-                "task_type":     task_type,
-                "metrics":       metrics,
-                "importance_df": imp_df,
-                "result_df":     pd.DataFrame({"Actual": y_test, "Predicted": y_pred}),
-                "y_test":        y_test,
-                "y_pred":        y_pred,
-                "le":            le,
-            }
-            st.session_state["pred_clean_means"][target_col] = X[numeric_features].mean().to_dict()
+                    pipeline = Pipeline([
+                        ("prep", preprocessor),
+                        ("model", model_obj),
+                    ])
+                    pipeline.fit(X_train, y_train)
+                    y_pred = pipeline.predict(X_test)
+                    train_pred = pipeline.predict(X_train)
+
+                    # CV setup
+                    n_cv = min(5, max(2, len(clean_df) // 5))
+                    if task_type == "classification":
+                        n_cv = min(n_cv, int(class_counts.min()))
+                        cv_strategy = StratifiedKFold(
+                            n_splits=n_cv, shuffle=True, random_state=42
+                        )
+                        scoring = "f1_weighted"
+                    else:
+                        cv_strategy = KFold(
+                            n_splits=n_cv, shuffle=True, random_state=42
+                        )
+                        scoring = "r2"
+
+                    cv_scores = cross_val_score(
+                        pipeline, X, y,
+                        cv=cv_strategy, scoring=scoring
+                    )
+
+                    # Metrics
+                    if task_type == "regression":
+                        r2        = r2_score(y_test, y_pred)
+                        train_r2  = r2_score(y_train, train_pred)
+                        mse       = mean_squared_error(y_test, y_pred)
+                        rmse      = np.sqrt(mse)
+                        mae       = mean_absolute_error(y_test, y_pred)
+                        dummy     = DummyRegressor(strategy="mean")
+                        dummy.fit(X_train, y_train)
+                        dummy_r2  = r2_score(y_test, dummy.predict(X_test))
+                        overfit   = (train_r2 - r2) > 0.15
+                        metrics   = dict(
+                            r2=r2, train_r2=train_r2, mse=mse,
+                            rmse=rmse, mae=mae,
+                            dummy_r2=dummy_r2, cv_scores=cv_scores,
+                            overfit=overfit,
+                        )
+                        comparison_rows.append({
+                            "Model": model_meta["name"],
+                            "R²": round(r2, 4),
+                            "RMSE": round(rmse, 2),
+                            "MAE": round(mae, 2),
+                            "CV Mean": round(cv_scores.mean(), 4),
+                            "Tag": model_meta["tag"],
+                        })
+                    else:
+                        acc       = accuracy_score(y_test, y_pred)
+                        train_acc = accuracy_score(y_train, train_pred)
+                        f1        = f1_score(
+                            y_test, y_pred,
+                            average="weighted", zero_division=0
+                        )
+                        dummy     = DummyClassifier(strategy="most_frequent")
+                        dummy.fit(X_train, y_train)
+                        dummy_acc = accuracy_score(
+                            y_test, dummy.predict(X_test)
+                        )
+                        overfit   = (train_acc - acc) > 0.15
+                        report_labels = np.unique(
+                            np.concatenate([y_test, y_pred])
+                        )
+                        report    = classification_report(
+                            y_test, y_pred,
+                            labels=report_labels,
+                            target_names=[
+                                str(le.inverse_transform([lb])[0])
+                                for lb in report_labels
+                            ],
+                            zero_division=0,
+                        )
+                        cm        = confusion_matrix(
+                            y_test, y_pred, labels=report_labels
+                        )
+                        metrics   = dict(
+                            acc=acc, train_acc=train_acc,
+                            f1=f1, dummy_acc=dummy_acc,
+                            cv_scores=cv_scores, report=report,
+                            cm=cm, cm_labels=report_labels,
+                            overfit=overfit,
+                            le=le,
+                        )
+                        comparison_rows.append({
+                            "Model": model_meta["name"],
+                            "Accuracy": round(acc, 4),
+                            "F1": round(f1, 4),
+                            "CV Mean": round(cv_scores.mean(), 4),
+                            "Tag": model_meta["tag"],
+                        })
+
+                    # Feature importance
+                    inner_model = pipeline.named_steps["model"]
+                    all_feat_names = (
+                        num_cols +
+                        (
+                            list(pipeline.named_steps["prep"]
+                                 .named_transformers_["cat"]
+                                 .get_feature_names_out(cat_cols))
+                            if cat_cols and "cat" in pipeline.named_steps["prep"].named_transformers_
+                            else []
+                        )
+                    )
+                    if hasattr(inner_model, "feature_importances_"):
+                        importances = inner_model.feature_importances_
+                    elif hasattr(inner_model, "coef_"):
+                        coef = inner_model.coef_
+                        importances = (
+                            np.abs(coef).mean(axis=0)
+                            if coef.ndim > 1 else np.abs(coef)
+                        )
+                    else:
+                        importances = np.zeros(len(all_feat_names))
+
+                    imp_len = min(len(importances), len(all_feat_names))
+                    imp_df  = (
+                        pd.DataFrame({
+                            "Feature": all_feat_names[:imp_len],
+                            "Importance": importances[:imp_len],
+                        })
+                        .sort_values("Importance", ascending=False)
+                        .head(15)
+                    )
+
+                    # Only store first model's full results for display
+                    if model_meta["name"] == model_choice or \
+                       target_col not in st.session_state["pred_models"]:
+                        st.session_state["pred_models"][target_col] = {
+                            "pipeline":      pipeline,
+                            "task_type":     task_type,
+                            "metrics":       metrics,
+                            "importance_df": imp_df,
+                            "result_df": pd.DataFrame({
+                                "Actual": y_test,
+                                "Predicted": y_pred,
+                            }),
+                            "y_test":   y_test,
+                            "y_pred":   y_pred,
+                            "le":       le,
+                            "model_name": model_meta["name"],
+                            "actual_feature_cols": actual_feature_cols,
+                            "X_sample": X.head(1),
+                        }
+                        st.session_state["pred_clean_means"] = {
+                            target_col: X.mean(numeric_only=True).to_dict()
+                        }
+
+                except Exception as exc:
+                    st.warning(
+                        f"⚠️ '{model_meta['name']}' failed on "
+                        f"'{target_col}': {exc}"
+                    )
+
+            if comparison_rows:
+                st.session_state["pred_comparison"].extend(comparison_rows)
 
     st.success("✅ All models trained!")
 
-# ── Results — outside button block so they survive reruns ─────
+# ── Results ───────────────────────────────────────────────────
 if st.session_state.get("pred_models"):
     stored_features = st.session_state["pred_feature_cols"]
     stored_targets  = st.session_state["pred_target_cols"]
     stored_model    = st.session_state.get("pred_model_choice", model_choice)
+    comparison_data = st.session_state.get("pred_comparison", [])
 
+    # ── Model Comparison Table (run-all mode) ──────────────
+    if comparison_data and len(comparison_data) > 1:
+        divider()
+        st.markdown("### 📊 Model Comparison Table")
+        comp_df = pd.DataFrame(comparison_data)
+        # Highlight best model
+        score_col = "R²" if "R²" in comp_df.columns else "Accuracy"
+        if score_col in comp_df.columns:
+            best_idx = comp_df[score_col].idxmax()
+            comp_df["🏆"] = comp_df.index.map(
+                lambda i: "✅ Best" if i == best_idx else ""
+            )
+        st.dataframe(comp_df, use_container_width=True)
+
+        # Export comparison CSV
+        comp_csv = comp_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "⬇️ Download Model Comparison CSV",
+            data=comp_csv,
+            file_name="model_comparison.csv",
+            mime="text/csv",
+        )
+
+    # ── Per-target detailed results ────────────────────────
     for target_col in stored_targets:
         if target_col not in st.session_state["pred_models"]:
             continue
@@ -449,57 +1045,123 @@ if st.session_state.get("pred_models"):
         result_df = data["result_df"]
         y_test    = data["y_test"]
         y_pred    = data["y_pred"]
-        le        = data["le"]
+        le        = data.get("le")
+        model_name = data.get("model_name", stored_model)
+
         badge_cls = "badge-reg" if task_type == "regression" else "badge-cls"
         badge_lbl = "Regression" if task_type == "regression" else "Classification"
 
         st.markdown(
             f'<div class="section-head"><h2>Results — {target_col} '
-            f'<span class="target-badge {badge_cls}">{badge_lbl}</span></h2><div class="line"></div></div>',
+            f'<span class="target-badge {badge_cls}">{badge_lbl}</span>'
+            f'&nbsp;<span style="color:#a0b8d8;font-size:0.9rem;">'
+            f'({model_name})</span></h2>'
+            f'<div class="line"></div></div>',
             unsafe_allow_html=True,
         )
 
         if task_type == "regression":
-            r2, mse, rmse, dummy_r2 = metrics["r2"], metrics["mse"], metrics["rmse"], metrics["dummy_r2"]
-            p1, p2, p3, p4 = st.columns(4)
-            p1.metric("R² Score", f"{r2:.3f}", delta=f"{r2 - dummy_r2:+.3f} vs baseline")
-            p2.metric("Baseline R²", f"{dummy_r2:.3f}")
-            p3.metric("MSE", f"{mse:.2f}")
-            p4.metric("RMSE", f"{rmse:.2f}")
+            r2       = metrics["r2"]
+            train_r2 = metrics["train_r2"]
+            mse      = metrics["mse"]
+            rmse     = metrics["rmse"]
+            mae      = metrics["mae"]
+            dummy_r2 = metrics["dummy_r2"]
+
+            p1, p2, p3, p4, p5 = st.columns(5)
+            p1.metric("R² (Test)",  f"{r2:.3f}",
+                      delta=f"{r2 - dummy_r2:+.3f} vs baseline")
+            p2.metric("R² (Train)", f"{train_r2:.3f}")
+            p3.metric("Baseline R²", f"{dummy_r2:.3f}")
+            p4.metric("RMSE",  f"{rmse:.2f}")
+            p5.metric("MAE",   f"{mae:.2f}")
+
+            if metrics.get("overfit"):
+                st.warning(
+                    f"⚠️ Possible overfitting: train R² ({train_r2:.3f}) "
+                    f"is much higher than test R² ({r2:.3f})."
+                )
             if r2 <= dummy_r2:
-                st.error(f"❌ '{target_col}' model doesn't beat the baseline.")
+                st.error(f"❌ Model doesn't beat the baseline (R²={r2:.3f}).")
             elif r2 >= 0.8:
                 st.success(f"✅ Excellent! R² = {r2:.3f}")
             elif r2 >= 0.6:
                 st.info(f"ℹ️ Good model. R² = {r2:.3f}")
             else:
-                st.warning(f"⚠️ Weak model. R² = {r2:.3f} — consider adding more features.")
+                st.warning(f"⚠️ Weak model. R² = {r2:.3f} — try more features.")
+
         else:
-            acc, f1, dummy_acc = metrics["acc"], metrics["f1"], metrics["dummy_acc"]
-            p1, p2, p3 = st.columns(3)
-            p1.metric("Accuracy", f"{acc:.3f}", delta=f"{acc - dummy_acc:+.3f} vs baseline")
-            p2.metric("F1 (weighted)", f"{f1:.3f}")
-            p3.metric("Baseline Accuracy", f"{dummy_acc:.3f}")
+            acc       = metrics["acc"]
+            train_acc = metrics["train_acc"]
+            f1        = metrics["f1"]
+            dummy_acc = metrics["dummy_acc"]
+
+            p1, p2, p3, p4 = st.columns(4)
+            p1.metric("Accuracy (Test)",  f"{acc:.3f}",
+                      delta=f"{acc - dummy_acc:+.3f} vs baseline")
+            p2.metric("Accuracy (Train)", f"{train_acc:.3f}")
+            p3.metric("F1 (weighted)",    f"{f1:.3f}")
+            p4.metric("Baseline Acc",     f"{dummy_acc:.3f}")
+
+            if metrics.get("overfit"):
+                st.warning(
+                    f"⚠️ Possible overfitting: train accuracy "
+                    f"({train_acc:.3f}) >> test accuracy ({acc:.3f})."
+                )
             if acc <= dummy_acc:
-                st.error(f"❌ '{target_col}' model doesn't beat the baseline.")
+                st.error(f"❌ Model doesn't beat the baseline.")
             elif acc >= 0.8:
                 st.success(f"✅ Excellent! Accuracy = {acc:.3f}")
             elif acc >= 0.6:
-                st.info(f"ℹ️ Good model. Accuracy = {acc:.3f}")
+                st.info(f"ℹ️ Good. Accuracy = {acc:.3f}")
             else:
                 st.warning(f"⚠️ Weak model. Accuracy = {acc:.3f}")
 
+        # Cross-validation
         cv_scores = metrics["cv_scores"]
         st.markdown("#### 🔄 Cross-Validation")
         cv1, cv2, cv3 = st.columns(3)
-        cv1.metric("CV Mean", f"{cv_scores.mean():.3f}")
-        cv2.metric("CV Std",  f"{cv_scores.std():.3f}")
-        cv3.metric("Min / Max", f"{cv_scores.min():.3f} / {cv_scores.max():.3f}")
+        cv1.metric("CV Mean",    f"{cv_scores.mean():.3f}")
+        cv2.metric("CV Std",     f"{cv_scores.std():.3f}")
+        cv3.metric("Min / Max",  f"{cv_scores.min():.3f} / {cv_scores.max():.3f}")
         if cv_scores.std() > 0.1:
-            st.warning("⚠️ High variance across folds.")
+            st.warning("⚠️ High variance across folds — results may be unstable.")
         else:
             st.success("✅ Stable across folds.")
 
+        # Classification extras: confusion matrix + report
+        if task_type == "classification":
+            with st.expander("📋 Classification Report", expanded=False):
+                st.text(metrics["report"])
+
+            cm         = metrics.get("cm")
+            cm_labels  = metrics.get("cm_labels", [])
+            if cm is not None and le is not None:
+                try:
+                    label_names = [
+                        str(le.inverse_transform([lb])[0])
+                        for lb in cm_labels
+                    ]
+                    fig_cm, ax_cm = plt.subplots(figsize=(6, 4))
+                    fig_cm.patch.set_facecolor("#0b1220")
+                    ax_cm.set_facecolor("#0d1f3c")
+                    disp = ConfusionMatrixDisplay(
+                        confusion_matrix=cm,
+                        display_labels=label_names,
+                    )
+                    disp.plot(ax=ax_cm, colorbar=False, cmap="Blues")
+                    ax_cm.tick_params(colors="white")
+                    ax_cm.xaxis.label.set_color("white")
+                    ax_cm.yaxis.label.set_color("white")
+                    ax_cm.title.set_color("#4da6ff")
+                    plt.title(f"Confusion Matrix — {target_col}",
+                              color="#4da6ff")
+                    st.pyplot(fig_cm)
+                    plt.close(fig_cm)
+                except Exception:
+                    pass
+
+        # Regression charts
         if task_type == "regression":
             fig1 = px.scatter(
                 result_df, x="Actual", y="Predicted",
@@ -525,120 +1187,212 @@ if st.session_state.get("pred_models"):
             fig_r.add_hline(y=0, line_dash="dash", line_color="red")
             apply_dark_theme(fig_r)
             render_plotly_chart(fig_r, use_container_width=True)
-        else:
-            with st.expander("📋 Classification Report"):
-                st.text(metrics["report"])
 
-        fig2 = px.bar(
-            imp_df, x="Feature", y="Importance",
-            title=f"Feature Importance — {target_col}",
-            color="Importance",
-            color_continuous_scale=["#4b3a11", "#c7902f", "#ffd36d"],
+        # Feature importance chart
+        if not imp_df.empty:
+            fig2 = px.bar(
+                imp_df, x="Feature", y="Importance",
+                title=f"Feature Importance — {target_col} ({model_name})",
+                color="Importance",
+                color_continuous_scale=["#4b3a11", "#c7902f", "#ffd36d"],
+            )
+            apply_dark_theme(fig2)
+            render_plotly_chart(fig2, use_container_width=True)
+
+            # Export feature importance
+            fi_csv = imp_df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                f"⬇️ Download Feature Importance CSV ({target_col})",
+                data=fi_csv,
+                file_name=f"feature_importance_{target_col}.csv",
+                mime="text/csv",
+                key=f"fi_dl_{target_col}",
+            )
+
+        # Export prediction results
+        pred_csv = result_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            f"⬇️ Download Prediction Results CSV ({target_col})",
+            data=pred_csv,
+            file_name=f"predictions_{target_col}.csv",
+            mime="text/csv",
+            key=f"pred_dl_{target_col}",
         )
-        apply_dark_theme(fig2)
-        render_plotly_chart(fig2, use_container_width=True)
         divider()
 
-    # ── Predict for New Data ──────────────────────────────────
-    st.markdown(
-        '<div class="section-head"><h2>🎯 Predict for New Data</h2><div class="line"></div></div>',
-        unsafe_allow_html=True,
+# ── Predict for New Data ──────────────────────────────────────
+st.markdown(
+    '<div class="section-head"><h2>🎯 Predict for New Data</h2>'
+    '<div class="line"></div></div>',
+    unsafe_allow_html=True,
+)
+st.markdown(
+    "<p style='color:#aad4ff'>Inputs are auto-generated from selected "
+    "features. Numeric → number input. Categorical → dropdown. "
+    "Date → text input (YYYY-MM-DD).</p>",
+    unsafe_allow_html=True,
+)
+
+pred_cfg_left, pred_cfg_right = st.columns(2)
+with pred_cfg_left:
+    pred_target_col = st.selectbox(
+        "🎯 Target Variable",
+        options=list(predictable_cols.keys()),
+        key="new_pred_target_col",
     )
-    st.markdown(
-        "<p style='color:#aad4ff'>Choose the target variable, valid feature columns, and the model here. This section uses dataset analysis to show only usable options.</p>",
-        unsafe_allow_html=True,
+with pred_cfg_right:
+    pred_feature_info = analyse_features(df, [pred_target_col])
+    pred_feature_candidates = list(pred_feature_info.keys())
+    pred_feature_cols = st.multiselect(
+        "📊 Feature Columns",
+        pred_feature_candidates,
+        default=pred_feature_candidates[:min(5, len(pred_feature_candidates))],
+        key="new_pred_feature_cols",
     )
 
-    pred_cfg_left, pred_cfg_mid, pred_cfg_right = st.columns(3)
-    with pred_cfg_left:
-        pred_target_col = st.selectbox(
-            "🎯 Target Variable",
-            options=list(predictable_cols.keys()),
-            key="new_pred_target_col",
-        )
-    with pred_cfg_mid:
-        pred_feature_candidates = [c for c in analyse_features(df, [pred_target_col]).keys() if c in numeric_feature_pool]
-        pred_feature_cols = st.multiselect(
-            "📊 Feature Columns",
-            pred_feature_candidates,
-            default=pred_feature_candidates[:min(5, len(pred_feature_candidates))],
-            key="new_pred_feature_cols",
-        )
-    with pred_cfg_right:
-        pred_model_choice = st.selectbox(
-            "🤖 Model to Use for Prediction",
-            ["Linear / Logistic Regression", "Ridge", "Random Forest"],
-            key="new_pred_model_choice",
-        )
+if pred_feature_cols:
+    pred_clean_df = df[pred_feature_cols + [pred_target_col]].dropna()
+    pred_task = predictable_cols[pred_target_col]["type"]
 
-    if pred_feature_cols:
-        pred_clean_df = df[pred_feature_cols + [pred_target_col]].dropna()
-        pred_means = pred_clean_df[pred_feature_cols].mean().to_dict() if not pred_clean_df.empty else {col: 0.0 for col in pred_feature_cols}
-
-        input_values = {}
-        n_feat = len(pred_feature_cols)
-        input_cols = st.columns(min(n_feat, 4))
-        for i, feat in enumerate(pred_feature_cols):
-            with input_cols[i % min(n_feat, 4)]:
+    # ── Auto-generate input widgets by feature type ────────
+    input_values = {}
+    input_cols = st.columns(min(len(pred_feature_cols), 3))
+    for i, feat in enumerate(pred_feature_cols):
+        col_widget = input_cols[i % min(len(pred_feature_cols), 3)]
+        with col_widget:
+            feat_lower = feat.lower()
+            # Date column
+            if any(h in feat_lower for h in
+                   ["date","time","month","day","timestamp"]):
+                input_values[feat] = st.text_input(
+                    feat, value="2024-01-01",
+                    key=f"new_pred_{feat}",
+                )
+            # Categorical column
+            elif pd.api.types.is_object_dtype(df[feat]):
+                unique_vals = df[feat].dropna().unique().tolist()
+                input_values[feat] = st.selectbox(
+                    feat, unique_vals,
+                    key=f"new_pred_{feat}",
+                )
+            # Numeric column
+            else:
+                mean_val = float(
+                    pred_clean_df[feat].mean()
+                    if feat in pred_clean_df.columns else 0.0
+                )
                 input_values[feat] = st.number_input(
-                    feat,
-                    value=float(pred_means.get(feat, 0.0)),
+                    feat, value=mean_val,
                     key=f"new_pred_{feat}",
                 )
 
-        if st.button("🔮 Predict Target", use_container_width=True):
-            if len(pred_clean_df) < 10:
-                st.error("❌ Not enough valid rows to make a prediction with the selected target and features.")
-            else:
-                pred_task = predictable_cols[pred_target_col]["type"]
-                X_pred_train = pred_clean_df[pred_feature_cols]
-                y_pred_raw = pred_clean_df[pred_target_col]
+    pred_model_choice_new = st.selectbox(
+        "🤖 Model",
+        model_names if "model_names" in dir() else
+        ["Random Forest Regressor", "Linear Regression"],
+        key="new_pred_model_choice",
+    )
+
+    if st.button("🔮 Predict", use_container_width=True):
+        if len(pred_clean_df) < 10:
+            st.error("❌ Not enough rows for prediction.")
+        else:
+            try:
+                # Build input row
+                input_row = {}
+                for feat in pred_feature_cols:
+                    feat_lower = feat.lower()
+                    val = input_values[feat]
+                    if any(h in feat_lower for h in
+                           ["date","time","month","day","timestamp"]):
+                        try:
+                            parsed_date = pd.to_datetime(val)
+                            input_row[f"{feat}_year"]    = parsed_date.year
+                            input_row[f"{feat}_month"]   = parsed_date.month
+                            input_row[f"{feat}_day"]     = parsed_date.day
+                            input_row[f"{feat}_weekday"] = parsed_date.weekday()
+                        except Exception:
+                            input_row[feat] = val
+                    else:
+                        input_row[feat] = val
+
+                X_input = pd.DataFrame([input_row])
+
+                # Re-train on full data for prediction
+                work = pred_clean_df.copy()
+                X_full = work[pred_feature_cols]
+                y_full_raw = work[pred_target_col]
 
                 pred_le = None
                 if pred_task == "classification":
                     pred_le = LabelEncoder()
-                    y_pred_train = pred_le.fit_transform(y_pred_raw.astype(str))
+                    y_full  = pred_le.fit_transform(y_full_raw.astype(str))
                 else:
-                    y_pred_train = y_pred_raw.values
+                    y_full = y_full_raw.values
 
-                if pred_task == "regression":
-                    if pred_model_choice == "Linear / Logistic Regression":
-                        pred_model = LinearRegression()
-                    elif pred_model_choice == "Ridge":
-                        pred_model = Ridge()
-                    else:
-                        pred_model = RandomForestRegressor(n_estimators=100, random_state=42)
-                else:
-                    if pred_model_choice in ("Linear / Logistic Regression", "Ridge"):
-                        pred_model = LogisticRegression(max_iter=500, random_state=42)
-                    else:
-                        pred_model = RandomForestClassifier(n_estimators=100, random_state=42)
+                pred_preprocessor, _, _ = build_preprocessor(X_full)
 
-                pred_pipeline = Pipeline([("scaler", StandardScaler()), ("model", pred_model)])
-                pred_pipeline.fit(X_pred_train, y_pred_train)
+                # Find model obj from catalogue
+                catalogue_now = st.session_state.get(
+                    "pred_catalogue",
+                    get_model_catalogue(
+                        predictable_cols[pred_target_col]["type"],
+                        profile_dataset(df, pred_target_col, pred_feature_cols),
+                    )
+                )
+                pred_meta = next(
+                    (m for m in catalogue_now
+                     if m["name"] == pred_model_choice_new),
+                    catalogue_now[0],
+                )
+                pred_model_obj = eval(pred_meta["model_obj"], {
+                    "LinearRegression": LinearRegression,
+                    "Ridge": Ridge, "Lasso": Lasso,
+                    "DecisionTreeRegressor": DecisionTreeRegressor,
+                    "RandomForestRegressor": RandomForestRegressor,
+                    "GradientBoostingRegressor": GradientBoostingRegressor,
+                    "KNeighborsRegressor": KNeighborsRegressor,
+                    "SVR": SVR,
+                    "LogisticRegression": LogisticRegression,
+                    "DecisionTreeClassifier": DecisionTreeClassifier,
+                    "RandomForestClassifier": RandomForestClassifier,
+                    "GradientBoostingClassifier": GradientBoostingClassifier,
+                    "KNeighborsClassifier": KNeighborsClassifier,
+                    "SVC": SVC,
+                    "GaussianNB": GaussianNB,
+                })
+                pred_pipeline_new = Pipeline([
+                    ("prep", pred_preprocessor),
+                    ("model", pred_model_obj),
+                ])
+                pred_pipeline_new.fit(X_full, y_full)
 
-                input_array = [input_values[f] for f in pred_feature_cols]
-                raw_pred = pred_pipeline.predict([input_array])[0]
+                raw_pred = pred_pipeline_new.predict(X_input)[0]
 
                 if pred_task == "classification" and pred_le is not None:
                     try:
-                        pred_display = str(pred_le.inverse_transform([int(raw_pred)])[0])
+                        pred_display = str(
+                            pred_le.inverse_transform([int(raw_pred)])[0]
+                        )
                     except Exception:
                         pred_display = str(raw_pred)
                 else:
                     pred_display = f"{float(raw_pred):.4f}"
 
-                st.markdown(f"#### Prediction using {pred_model_choice}")
                 st.markdown(
                     f'<div class="multi-pred-card">'
-                    f'<div class="multi-pred-label">{pred_target_col}</div>'
+                    f'<div class="multi-pred-label">'
+                    f'Predicted {pred_target_col}</div>'
                     f'<div class="multi-pred-value">{pred_display}</div>'
-                    f'<div class="multi-pred-meta">{pred_task} · {pred_model_choice}</div>'
+                    f'<div class="multi-pred-meta">'
+                    f'{pred_task} · {pred_model_choice_new}</div>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
-    else:
-        st.info("Select at least one valid feature column in this section to enable prediction.")
+            except Exception as exc:
+                st.error(f"❌ Prediction failed: {exc}")
+else:
+    st.info("Select at least one feature column to enable prediction.")
 
 st.markdown(
     """
