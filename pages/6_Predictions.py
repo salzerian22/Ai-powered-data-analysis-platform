@@ -27,11 +27,7 @@ from sklearn.preprocessing import OneHotEncoder, LabelEncoder
 from sklearn.metrics import (
     mean_absolute_error,
     confusion_matrix,
-    ConfusionMatrixDisplay,
 )
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 import math
 import io
 import sys, os
@@ -1142,22 +1138,28 @@ if st.session_state.get("pred_models"):
                         str(le.inverse_transform([lb])[0])
                         for lb in cm_labels
                     ]
-                    fig_cm, ax_cm = plt.subplots(figsize=(6, 4))
-                    fig_cm.patch.set_facecolor("#0b1220")
-                    ax_cm.set_facecolor("#0d1f3c")
-                    disp = ConfusionMatrixDisplay(
-                        confusion_matrix=cm,
-                        display_labels=label_names,
+                    cm_df = pd.DataFrame(
+                        cm,
+                        index=label_names,
+                        columns=label_names,
                     )
-                    disp.plot(ax=ax_cm, colorbar=False, cmap="Blues")
-                    ax_cm.tick_params(colors="white")
-                    ax_cm.xaxis.label.set_color("white")
-                    ax_cm.yaxis.label.set_color("white")
-                    ax_cm.title.set_color("#4da6ff")
-                    plt.title(f"Confusion Matrix — {target_col}",
-                              color="#4da6ff")
-                    st.pyplot(fig_cm)
-                    plt.close(fig_cm)
+                    fig_cm = px.imshow(
+                        cm_df,
+                        text_auto=True,
+                        labels=dict(
+                            x="Predicted",
+                            y="Actual",
+                            color="Count",
+                        ),
+                        title=f"Confusion Matrix — {target_col}",
+                        color_continuous_scale=[
+                            "#0d1f3c",
+                            "#c7902f",
+                            "#ffd36d",
+                        ],
+                    )
+                    apply_dark_theme(fig_cm)
+                    render_plotly_chart(fig_cm, use_container_width=True)
                 except Exception:
                     pass
 
