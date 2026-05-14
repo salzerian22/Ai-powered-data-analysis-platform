@@ -94,6 +94,7 @@ st.markdown(
 .model-icon { font-size: 1.5rem; }
 .model-title { margin-top: 0.5rem; color: #fff4d4; font: 700 1.04rem "Inter", sans-serif; }
 .model-desc { margin-top: 0.34rem; color: #c8d2e5; font: 400 0.86rem/1.55 "IBM Plex Sans", sans-serif; }
+.model-count { color: #ffd875; font: 700 0.86rem "IBM Plex Sans", sans-serif; letter-spacing: 0.12em; text-transform: uppercase; margin-top: 0.45rem; }
 .results-box { margin-top: 1rem; padding: 1rem 1.1rem; border-radius: 18px; border: 1px solid rgba(255, 211, 104, 0.34); background: linear-gradient(180deg, rgba(17, 27, 44, 0.98), rgba(9, 18, 32, 1)); color: #e7edf8; font: 400 0.94rem/1.75 "IBM Plex Sans", sans-serif; }
 .results-box strong { color: #ffd875; }
 .target-badge { display: inline-block; padding: 0.18rem 0.7rem; border-radius: 999px; font: 600 0.78rem "IBM Plex Sans", sans-serif; margin-left: 0.5rem; }
@@ -582,11 +583,15 @@ with st.expander("📊 View column suitability analysis", expanded=False):
 # ── Model cards ───────────────────────────────────────────────
 st.markdown(
     """
-<div class="section-head"><h2>Select a Model</h2><div class="line"></div></div>
+<div class="section-head"><h2>Select From 10+ ML Models</h2><div class="line"></div></div>
+<div class="model-count">Regression and classification model library</div>
 <div class="model-grid">
-    <div class="model-card"><div class="model-icon">📈</div><div class="model-title">Linear / Logistic Regression</div><div class="model-desc">Fast baseline. Linear for continuous targets, Logistic for categories.</div></div>
-    <div class="model-card"><div class="model-icon">🌿</div><div class="model-title">Ridge</div><div class="model-desc">Regularized regression — more stable when features overlap.</div></div>
-    <div class="model-card"><div class="model-icon">🌲</div><div class="model-title">Random Forest</div><div class="model-desc">Nonlinear ensemble for both regression and classification.</div></div>
+    <div class="model-card"><div class="model-icon">📈</div><div class="model-title">Linear & Logistic Regression</div><div class="model-desc">Fast baselines for continuous and categorical targets.</div></div>
+    <div class="model-card"><div class="model-icon">🌿</div><div class="model-title">Ridge & Lasso</div><div class="model-desc">Regularized regression models for stable, interpretable predictions.</div></div>
+    <div class="model-card"><div class="model-icon">🌲</div><div class="model-title">Random Forest</div><div class="model-desc">Nonlinear ensemble models for regression and classification.</div></div>
+    <div class="model-card"><div class="model-icon">⚡</div><div class="model-title">Gradient Boosting</div><div class="model-desc">High-performing boosted trees for structured tabular datasets.</div></div>
+    <div class="model-card"><div class="model-icon">🌳</div><div class="model-title">Decision Trees</div><div class="model-desc">Interpretable tree models with depth limits to reduce overfitting.</div></div>
+    <div class="model-card"><div class="model-icon">🧭</div><div class="model-title">KNN, SVM & Naive Bayes</div><div class="model-desc">Additional options for small datasets, boundaries, and quick baselines.</div></div>
 </div>
 """,
     unsafe_allow_html=True,

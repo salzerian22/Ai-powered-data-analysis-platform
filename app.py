@@ -276,7 +276,7 @@ if "df" not in st.session_state:
     </div>
     <div class="stats-strip">
         <div class="stat-item"><div class="stat-num">7</div><div class="stat-label">Analysis modules</div></div>
-        <div class="stat-item"><div class="stat-num">3</div><div class="stat-label">ML models</div></div>
+        <div class="stat-item"><div class="stat-num">10+</div><div class="stat-label">ML models</div></div>
         <div class="stat-item"><div class="stat-num">50MB</div><div class="stat-label">Upload limit</div></div>
         <div class="stat-item"><div class="stat-num">AI</div><div class="stat-label">Insights engine</div></div>
     </div>
@@ -293,7 +293,7 @@ if "df" not in st.session_state:
         <div class="feat-card" data-tilt-card="true"><span class="feat-icon">DQ</span><div class="feat-title">Data Quality</div><div class="feat-desc">Surface completeness, uniqueness, and consistency signals before deeper analysis.</div></div>
         <div class="feat-card" data-tilt-card="true"><span class="feat-icon">VZ</span><div class="feat-title">Visualization</div><div class="feat-desc">Generate polished interactive charts that help patterns stand out immediately.</div></div>
         <div class="feat-card" data-tilt-card="true"><span class="feat-icon">AI</span><div class="feat-title">AI Insights</div><div class="feat-desc">Ask questions in natural language and get contextual summaries of your dataset.</div></div>
-        <div class="feat-card" data-tilt-card="true"><span class="feat-icon">PR</span><div class="feat-title">Predictions</div><div class="feat-desc">Train regression models with metrics, diagnostics, and feature-level interpretation.</div></div>
+        <div class="feat-card" data-tilt-card="true"><span class="feat-icon">PR</span><div class="feat-title">Predictions</div><div class="feat-desc">Train regression and classification models with metrics, diagnostics, and feature-level interpretation.</div></div>
     </div>
     """, unsafe_allow_html=True)
 
